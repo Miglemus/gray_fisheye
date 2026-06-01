@@ -6,22 +6,29 @@ from gray.mlp import PreMLP, PostMLP
 from gray.exposure_comp import ExposureComp
 
 
+def _find_library_path():
+    parent_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(parent_dir)
+    search_dirs = [
+        # * In a pip install, the shared library is dumped next to this file.
+        parent_dir,
+        # * During development, the shared library lives in the project build folder.
+        os.path.join(project_dir, "build"),
+        os.path.join(project_dir, "build", "Release"),
+    ]
+    lib_names = ["libgray.so", "gray.dll", "libgray.dylib"]
+    candidates = [os.path.join(directory, lib_name) for directory in search_dirs for lib_name in lib_names]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    tried_paths = "\n - ".join(candidates)
+    raise FileNotFoundError(f"Unable to locate the raytracer library. Tried:\n - {tried_paths}")
+
+
 class Raytracer(torch.nn.Module):
-    __PARENT_DIR = os.path.dirname(os.path.abspath(__file__))
-    if sys.platform == "win32":
-        # Windows: look for gray.dll in build\Release\
-        __PROJECT_DIR = os.path.dirname(__PARENT_DIR)
-        LIB_PATH = os.path.join(__PROJECT_DIR, "build", "Release", "gray.dll")
-    elif os.path.exists(os.path.join(__PARENT_DIR, "libgray.so")):
-        # * In a pip module, the shared library is dumped next to this file
-        LIB_PATH = os.path.join(__PARENT_DIR, "libgray.so")
-    else:
-        # * During development, the shared library is in the project's build folder
-        LIB_PATH = os.path.join(
-            os.path.dirname(__PARENT_DIR),
-            "build",
-            "libgray.so",
-        )
+    LIB_PATH = _find_library_path()
     LOADED = False
 
     def __init__(
@@ -38,6 +45,10 @@ class Raytracer(torch.nn.Module):
         self.cfg = cfg
         self.image_width = image_width
         self.image_height = image_height
+
+        # * Active render resolution, lower during warmup
+        self.render_width = image_width
+        self.render_height = image_height
 
         # * Load the CUDA module
         torch.classes.load_library(Raytracer.LIB_PATH)
@@ -134,7 +145,9 @@ class Raytracer(torch.nn.Module):
 
         self.cuda_module.forward_pass()
 
-        output_channels = framebuffer.output_channels.detach()
+        # * Slice out the active top-left rectangle (the whole buffer when at full resolution)
+        h, w = self.render_height, self.render_width
+        output_channels = framebuffer.output_channels.detach()[:h, :w]
         if not skip_copy or grad_enabled:
             output_channels = output_channels.clone()
         output_channels = output_channels.moveaxis(-1, 0)
@@ -148,8 +161,8 @@ class Raytracer(torch.nn.Module):
 
         # * Apply post-processing MLP
         if self.cfg.post_mlp:
-            ray_direction = framebuffer.ray_direction.detach().moveaxis(-1, 0)
-            depth = framebuffer.output_depth.detach().moveaxis(-1, 0)
+            ray_direction = framebuffer.ray_direction.detach()[:h, :w].moveaxis(-1, 0)
+            depth = framebuffer.output_depth.detach()[:h, :w].moveaxis(-1, 0)
             hit_point = cam_info.origin_cuda()[:, None, None] + depth * ray_direction
             render = self.post_mlp(output_channels, hit_point, ray_direction)
         else:
@@ -162,7 +175,8 @@ class Raytracer(torch.nn.Module):
         loss.backward()
         with torch.no_grad():
             framebuffer = self.cuda_module.get_framebuffer()
-            framebuffer.grad_output_channels.copy_(self.output_channels.grad.moveaxis(0, -1))
+            h, w = self.render_height, self.render_width
+            framebuffer.grad_output_channels[:h, :w].copy_(self.output_channels.grad.moveaxis(0, -1))
             self.output_channels = None
 
         # * Backprop raytracer
@@ -181,6 +195,12 @@ class Raytracer(torch.nn.Module):
             self.post_mlp.step()
         if self.cfg.exposure_comp_enabled:
             self.exposure_comp.step()
+
+    def set_render_resolution(self, width: int, height: int):
+        "Render at a reduced resolution (must not exceed the allocated framebuffer size)."
+        self.render_width = width
+        self.render_height = height
+        self.cuda_module.set_render_resolution(width, height)
 
     @staticmethod
     def from_point_cloud(

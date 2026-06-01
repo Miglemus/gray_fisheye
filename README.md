@@ -12,14 +12,13 @@ Using the [`uv`](https://github.com/astral-sh/uv) package manager (installable w
 ```bash
 git submodule update --init --recursive   # pull submodules
 bash install.sh                           # create environment & install dependencies
-source .venv/*/activate                   # activate environment
+source .venv/bin/activate                 # activate environment
 bash ./make.sh                            # compile the cuda raytracer into `build/`
 ```
 
 This codebase requires a graphics card supporting OptiX 8 and a local CUDA 12 toolkit installation exposing `nvcc`.
 
-We are working on Windows support using WSL. Please report any issues if you attempt working on Windows.
-
+For Windows please refer to [windows/WINDOWS_README.md](windows/WINDOWS_README.md).
 
 ## Viewing Pretrained Models
 The pretrained models are [available online](https://repo-sam.inria.fr/nerphys/gray/pretrained.html) and can be downloaded in batch with `bash scripts/download_all_pretrained_scenes.sh`. You can open them in the interactive viewer with
@@ -153,8 +152,16 @@ Note that the backward pass relies on the data from the forward pass staying unm
 ### Quality Presets
 Preset configurations are available: adding the flag `-c configs/lq.json` selects a lower level of quality, and the flag `-c configs/hq.json` selects a high level of quality. The default quality level is `mq` (medium quality). The hyperparameters used are detailed in the paper.
 
-### Compatibility with 3DGS
-The gaussians produced by this method are incompatible with 3DGS; in theory, the differences could be resolved by modifying both methods (refer to the paper for a short discussion on page 14), but this has not been done in practice. The file format was changed to `.safetensors` which is simpler and faster.
+### Compatibility with 3DGS and 3DGRT
+The gaussians produced by this method are incompatible with 3DGS; in theory, the differences (different kernel, different sorting, and perspective accuracy) could be resolved by modifying both methods (refer to the paper for a short discussion on page 14), but this has not been done in practice. Rendering differences with 3DGRT are minute (hybrid transaprency).
+
+Implementation-wise, the file format was changed to `.safetensors` which is simpler and faster. Scenes can be converted **to and from** the INRIA [3DGS](https://github.com/graphdeco-inria/gaussian-splatting) and NVIDIA [3DGRT](https://github.com/nv-tlabs/3dgrut) formats with the scripts in [`convert/`](convert/) (`to_3dgs.py`/`from_3dgs.py` and `to_3dgrt.py`/`from_3dgrt.py`). The parameter conversion is lossless (a GRay → 3DGS → GRay round-trip reproduces identical metrics) but 3DGS-based viewers will produce blurrier images with some differences. 3DGRT renders should look identical. GRay scenes converted into these formats also render faster than each method's own models:
+
+| Renderer | FPS (their scenes) | FPS (our scenes) | Speedup |
+| :--- | ---: | ---: | ---: |
+| 3DGS  | 253 | 432 | 1.7× |
+| 3DGRT |  68 | 190 | 2.8× |
+
 
 ### Evaluation
 Metric computation was moved to the [PIQ](https://github.com/photosynthesis-team/piq) library since the LPIPS metric was incorrect in the original 3DGS codebase. PSNRs and SSIM scores were verified to match.
@@ -244,5 +251,7 @@ This includes, but is not limited to:
 Thanks to [Jeffrey Hu](https://jefequien.github.io/) for helping with the code and pointing us towards dense initialization.
 
 Thanks to [Ishaan Shah](https://ishaanshah.xyz/) for the Gaussian Viewer.
+
+Thanks to [Simon Lucas](https://simon-lucas.fr/) for help on the Windows configuration.
 
 > This research was co-funded by the European Union (EU) ERC Advanced Grant NERPHYS No 101141721. Views and opinions expressed are however those of the author(s) only and do not necessarily reflect those of the EU or the European Research Council. Neither the EU nor the granting authority can be held responsible for them. Experiments presented in this paper were carried out using the Grid'5000 testbed, supported by a scientific interest group hosted by Inria and including CNRS, RENATER and several Universities as well as other organizations. This research was also supported by NSERC grant RGPIN-2020-04799 and the Digital Research Alliance Canada. The authors are grateful to Adobe and NVIDIA for generous donations.
