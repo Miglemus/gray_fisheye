@@ -49,14 +49,8 @@ echo "--------------------------------------------------"
 for arg in "$@"
 do
     echo "=== Traitement du dossier : $arg ==="
-    echo "Execution du colmap pour $arg"
-    python run_colmap.py -s "$arg"
-
-    # images are moved from input to image folder if not rename folder
-    if [ ! -d "$arg/image" ]; then
-        echo "Renaming $arg/input to $arg/image"
-        mv "$arg/input" "$arg/image"
-    fi
+    # echo "Execution du colmap pour $arg"
+    # python run_colmap.py -s "$arg"
 
     echo "Resizing des images dans $arg"
     python resize.py -s "$arg" -y

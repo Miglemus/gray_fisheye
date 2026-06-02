@@ -72,9 +72,9 @@ for f in (src / "sparse").iterdir():
     shutil.move(str(f), str(src / "sparse" / "0" / f.name))
 
 # * Cleanup
-shutil.rmtree(src / "distorted")
-shutil.rmtree(src / "stereo", ignore_errors=True)
-for f in src.glob("*.sh"):
-    f.unlink()
-if cli.delete_input:
-    shutil.rmtree(src / "input")
+# shutil.rmtree(src / "distorted")
+# shutil.rmtree(src / "stereo", ignore_errors=True)
+# for f in src.glob("*.sh"):
+#     f.unlink()
+# if cli.delete_input:
+#     shutil.rmtree(src / "input")
