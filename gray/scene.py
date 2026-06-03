@@ -38,16 +38,17 @@ class SceneInfo:
     @staticmethod
     def from_colmap(cfg: Config, llffhold=8, parse_point_cloud=True) -> SceneInfo:
         path = cfg.source_path
+        sparse_dir = os.path.join(path, cfg.colmap_sparse_subdir)
 
         # * Read colmap data
         try:
-            cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
-            cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
+            cameras_extrinsic_file = os.path.join(sparse_dir, "images.bin")
+            cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.bin")
             cam_extrinsics = colmap.read_extrinsics_binary(cameras_extrinsic_file)
             cam_intrinsics = colmap.read_intrinsics_binary(cameras_intrinsic_file)
         except FileNotFoundError:
-            cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
-            cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
+            cameras_extrinsic_file = os.path.join(sparse_dir, "images.txt")
+            cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.txt")
             cam_extrinsics = colmap.read_extrinsics_text(cameras_extrinsic_file)
             cam_intrinsics = colmap.read_intrinsics_text(cameras_intrinsic_file)
 
@@ -63,7 +64,7 @@ class SceneInfo:
                     name for idx, name in enumerate(cam_names) if idx % llffhold == 0
                 ]
             else:
-                with open(os.path.join(path, "sparse/0", "test.txt"), "r") as file:
+                with open(os.path.join(sparse_dir, "test.txt"), "r") as file:
                     test_cam_names_list = [line.strip() for line in file]
         else:
             test_cam_names_list = []

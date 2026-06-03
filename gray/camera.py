@@ -19,6 +19,8 @@ class CameraInfo:
     image_width: int
     image_height: int
     is_test: bool
+    model: str = "pinhole"  # * "pinhole" or "opencv_fisheye"
+    intrinsics: np.ndarray = None  # * fx, fy, cx, cy, k1, k2, k3, k4 scaled to image resolution (fisheye only)
 
     @staticmethod
     def from_colmap(cfg, key, extr, intr, is_test: bool):
@@ -32,6 +34,8 @@ class CameraInfo:
         R = np.transpose(colmap.qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
         origin = -R @ T
+        model = "pinhole"
+        intrinsics = None
         if intr.model == "SIMPLE_PINHOLE":
             focal_length_x = intr.params[0]
             fov_y = focal2fov(focal_length_x, height)
@@ -41,9 +45,16 @@ class CameraInfo:
             focal_length_y = intr.params[1]
             fov_y = focal2fov(focal_length_y, height)
             fov_x = focal2fov(focal_length_x, width)
+        elif intr.model == "OPENCV_FISHEYE":
+            model = "opencv_fisheye"
+            fx, fy, cx, cy, k1, k2, k3, k4 = intr.params
+            # * fov_* kept only for logging / dense-init helpers, not used for fisheye rays
+            fov_y = focal2fov(fy, height)
+            fov_x = focal2fov(fx, width)
+            intrinsics = np.array([fx, fy, cx, cy, k1, k2, k3, k4], dtype=np.float64)
         else:
             assert False, (
-                "Colmap camera model not handled: only undistorted camera (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
+                "Colmap camera model not handled: only PINHOLE, SIMPLE_PINHOLE and OPENCV_FISHEYE supported!"
             )
 
         if os.path.isabs(extr.name):
@@ -61,6 +72,16 @@ class CameraInfo:
         with Image.open(image_path) as image:
             image_width, image_height = image.size
 
+        # * Rescale fisheye intrinsics from the COLMAP resolution to the loaded image resolution
+        if intrinsics is not None:
+            scale_x = image_width / width
+            scale_y = image_height / height
+            intrinsics = intrinsics.copy()
+            intrinsics[0] *= scale_x  # fx
+            intrinsics[1] *= scale_y  # fy
+            intrinsics[2] *= scale_x  # cx
+            intrinsics[3] *= scale_y  # cy
+
         return CameraInfo(
             uid=uid,
             R=R,
@@ -73,6 +94,8 @@ class CameraInfo:
             image_width=image_width,
             image_height=image_height,
             is_test=is_test,
+            model=model,
+            intrinsics=intrinsics,
         )
 
     @staticmethod
@@ -116,4 +139,14 @@ class CameraInfo:
             rotation[:, 0] *= -1
             tensor = torch.from_numpy(rotation).cuda()
             self._rotation_c2w_blender_cuda = tensor
+        return tensor
+
+    def intrinsics_cuda(self):
+        """Returns the fisheye intrinsics (fx, fy, cx, cy, k1..k4) cached as a CUDA tensor"""
+        import torch
+
+        tensor = getattr(self, "_intrinsics_cuda", None)
+        if tensor is None:
+            tensor = torch.from_numpy(np.asarray(self.intrinsics, dtype=np.float32)).cuda()
+            self._intrinsics_cuda = tensor
         return tensor
