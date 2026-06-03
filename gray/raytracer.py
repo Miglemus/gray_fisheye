@@ -129,6 +129,18 @@ class Raytracer(torch.nn.Module):
         config = self.cuda_module.get_config()
         config.rays_from_python.fill_(False)
         camera.vertical_fov_radians.fill_(cam_info.fov_y)
+        if getattr(cam_info, "model", "pinhole") == "opencv_fisheye":
+            # * Intrinsics are stored for the full image; rescale to the active render resolution
+            intrinsics = cam_info.intrinsics_cuda().clone()
+            scale_x = self.render_width / cam_info.image_width
+            scale_y = self.render_height / cam_info.image_height
+            intrinsics[0] *= scale_x  # fx
+            intrinsics[2] *= scale_x  # cx
+            intrinsics[1] *= scale_y  # fy
+            intrinsics[3] *= scale_y  # cy
+            camera.set_opencv_fisheye(intrinsics)
+        else:
+            camera.set_pinhole()
         camera.set_pose(cam_info.origin_cuda(), cam_info.rotation_c2w_blender_cuda())
 
         # * Set gaussian colors from view direction MLP

@@ -16,7 +16,15 @@ class DatasetConfig:
     
     eval: bool = True  
 
+    fisheye: Annotated[bool, arg(aliases=["-f"])] = False  # * Train on raw fisheye images with OPENCV_FISHEYE rays
+    colmap_sparse_subdir: str = "sparse/0"  # * Overridden to the distorted reconstruction when fisheye=True
+
     def __post_init__(self):
+        # * Fisheye uses the distorted COLMAP reconstruction and the raw (resized) images
+        if self.fisheye:
+            self.colmap_sparse_subdir = "distorted/sparse/0"
+            if self.images_dir == "images_{downsampling}":
+                self.images_dir = "input_{downsampling}"
         # * Allow using other settings when specifying paths e.g. {downsampling} in images_dir
         self.images_dir = self.images_dir.format(
             downsampling=self.downsampling, source_path=self.source_path

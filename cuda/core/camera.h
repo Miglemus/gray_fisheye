@@ -3,7 +3,12 @@
 #ifdef __CUDACC__
 #include "../utils/random.h"
 #include "../utils/vec_math.h"
+#include "fisheye.cuh"
 #endif
+
+// * Primary-ray camera models
+#define CAMERA_MODEL_PINHOLE 0
+#define CAMERA_MODEL_OPENCV_FISHEYE 1
 
 struct Camera {
     const float3 *origin;
@@ -13,13 +18,12 @@ struct Camera {
     const float *znear;
     const float *zfar;
 
+    const int *model_id;          // * CAMERA_MODEL_* selector
+    const float *fisheye_params;  // * fx, fy, cx, cy, k1, k2, k3, k4 (already scaled to render resolution)
+
 #ifdef __CUDACC__
     __device__ float3 compute_primary_ray_direction(const bool jitter, const uint3 idx, const uint3 dim,
                                                     unsigned int &seed) {
-        // * Get camera intrinsics
-        float view_size = tan(*vertical_fov_radians / 2);
-        float aspect_ratio = float(dim.x) / float(dim.y);
-
         // * Compute sub-pixel jitter
         float2 idxf = make_float2(idx.x, idx.y);
         if (jitter) {
@@ -27,7 +31,21 @@ struct Camera {
             idxf += jitter_offset;
         }
 
-        // * Convert to NDC
+        if (*model_id == CAMERA_MODEL_OPENCV_FISHEYE) {
+            // * Unproject pixel to a unit bearing in the OpenCV camera frame (x right, y down, z fwd)
+            float3 ocv = fisheye_unproject(fisheye_params, idxf.x + 0.5f, idxf.y + 0.5f);
+            if (ocv.x == 0.0f && ocv.y == 0.0f && ocv.z == 0.0f) {
+                return make_float3(0.0f, 0.0f, 0.0f); // * Inactive pixel (outside the fisheye FOV)
+            }
+            // * Convert to GRay's camera frame (x right, y up, z back) then rotate to world
+            float3 cam_dir = make_float3(ocv.x, -ocv.y, -ocv.z);
+            return normalize(rotation_w2c[0] * cam_dir.x + rotation_w2c[1] * cam_dir.y +
+                             rotation_w2c[2] * cam_dir.z);
+        }
+
+        // * Pinhole: NDC image-plane coordinates (x right, y up, forward = -z)
+        float view_size = tan(*vertical_fov_radians / 2);
+        float aspect_ratio = float(dim.x) / float(dim.y);
         float y = view_size * (1.0f - 2.0f * (idxf.y + 0.5f) / (float(dim.y)));
         float x = aspect_ratio * view_size * (2.0f * (idxf.x + 0.5f) / (float(dim.x)) - 1.0f);
 
@@ -48,6 +66,9 @@ struct CameraDataHolder : torch::CustomClassHolder {
     Tensor znear = torch::zeros({1}, CUDA_FLOAT32);
     Tensor zfar = torch::zeros({1}, CUDA_FLOAT32);
 
+    Tensor model_id = torch::zeros({1}, CUDA_INT32);        // * defaults to CAMERA_MODEL_PINHOLE
+    Tensor fisheye_params = torch::zeros({8}, CUDA_FLOAT32); // * fx, fy, cx, cy, k1, k2, k3, k4
+
     Camera reify() {
         return Camera{
             .origin = reinterpret_cast<float3 *>(origin.data_ptr()),
@@ -56,6 +77,8 @@ struct CameraDataHolder : torch::CustomClassHolder {
             .rotation_w2c = reinterpret_cast<float3 *>(rotation_w2c.data_ptr()),
             .znear = reinterpret_cast<float *>(znear.data_ptr()),
             .zfar = reinterpret_cast<float *>(zfar.data_ptr()),
+            .model_id = reinterpret_cast<int *>(model_id.data_ptr()),
+            .fisheye_params = reinterpret_cast<float *>(fisheye_params.data_ptr()),
         };
     }
 
@@ -67,9 +90,19 @@ struct CameraDataHolder : torch::CustomClassHolder {
         rotation_w2c.copy_(c2w_rotation.transpose(0, 1));
     }
 
+    void set_pinhole() { model_id.fill_(0); }
+
+    void set_opencv_fisheye(const Tensor &params) {
+        TORCH_CHECK(params.numel() == 8, "fisheye params must have 8 elements (fx, fy, cx, cy, k1..k4)");
+        model_id.fill_(1);
+        fisheye_params.copy_(params.reshape({8}));
+    }
+
     static void bind(torch::Library &m) {
         m.class_<CameraDataHolder>("CameraDataHolder")
             .def("set_pose", &CameraDataHolder::set_pose)
+            .def("set_pinhole", &CameraDataHolder::set_pinhole)
+            .def("set_opencv_fisheye", &CameraDataHolder::set_opencv_fisheye)
             .def_readonly("vertical_fov_radians", &CameraDataHolder::vertical_fov_radians)
             .def_readonly("znear", &CameraDataHolder::znear)
             .def_readonly("zfar", &CameraDataHolder::zfar);
