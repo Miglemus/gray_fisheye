@@ -34,6 +34,9 @@ class SceneInfo:
     test_images: Dict[str, torch.Tensor]
     pc_path: Optional[str]
     is_nerf_synthetic: bool
+    # * Shared radial mask for fisheye vignette (same camera / resolution for all views)
+    valid_mask: Optional[torch.Tensor] = None
+    valid_mask_halfres: Optional[torch.Tensor] = None
 
     @staticmethod
     def from_colmap(cfg: Config, llffhold=8, parse_point_cloud=True) -> SceneInfo:
@@ -142,6 +145,24 @@ class SceneInfo:
                 for name, image in train_images.items()
             }
 
+        # * Shared radial mask (identical intrinsics / resolution across views)
+        valid_mask = None
+        valid_mask_halfres = None
+        if cfg.fisheye and cfg.fisheye_mask_geometric:
+            from gray.fisheye_mask import build_fisheye_mask
+
+            ref_cam = train_cam_infos[0] if train_cam_infos else test_cam_infos[0]
+            ref_image = train_images[ref_cam.image_name] if train_cam_infos else test_images[ref_cam.image_name]
+            height, width = ref_image.shape[-2], ref_image.shape[-1]
+            valid_mask = build_fisheye_mask(ref_cam, height, width, ref_image.device, cfg)
+            if cfg.half_res_iters > 0:
+                valid_mask_halfres = (
+                    F.interpolate(valid_mask[None, None].float(), scale_factor=0.5, mode="nearest")[
+                        0, 0
+                    ]
+                    > 0.5
+                )
+
         return SceneInfo(
             point_cloud=pcd,
             train_cameras=train_cam_infos,
@@ -151,6 +172,8 @@ class SceneInfo:
             pc_path=pc_path,
             is_nerf_synthetic=False,
             train_images_halfres=train_images_halfres,
+            valid_mask=valid_mask,
+            valid_mask_halfres=valid_mask_halfres,
         )
 
     @staticmethod

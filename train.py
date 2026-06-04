@@ -167,6 +167,7 @@ while iteration < cfg.iterations + 1:
                 )
 
             psnrs, ssims = [], []
+            mask = scene.valid_mask
 
             for label, cam, images_dict, track_psnr_name, track_ssim_name in views:
                 with torch.no_grad():
@@ -174,6 +175,8 @@ while iteration < cfg.iterations + 1:
                 preview_target = images_dict[cam.image_name]
 
                 preview_error = (preview_render - preview_target).abs()
+                if mask is not None:
+                    preview_error = preview_error * mask.unsqueeze(0)
                 if preview_error.amax() > 0:
                     preview_error = preview_error / preview_error.amax()
 
@@ -181,13 +184,16 @@ while iteration < cfg.iterations + 1:
                 preview_path = os.path.join(cfg.model_path, f"preview_{label}_{iteration:05d}.png")
                 executor.submit(save_image, preview, preview_path)
 
-                preview_psnr = psnr(preview_render[None], preview_target[None]).item()
+                if mask is not None:
+                    preview_psnr = masked_psnr(preview_render, preview_target, mask).item()
+                    preview_ssim = masked_ssim(preview_render, preview_target, mask).item()
+                else:
+                    preview_psnr = psnr(preview_render[None], preview_target[None]).item()
+                    preview_ssim = ssim(
+                        preview_render[None], preview_target[None], downsample=False
+                    ).item()
                 writer.add_scalar(track_psnr_name, preview_psnr, iteration)
                 psnrs.append(preview_psnr)
-
-                preview_ssim = ssim(
-                    preview_render[None], preview_target[None], downsample=False
-                ).item()
                 writer.add_scalar(track_ssim_name, preview_ssim, iteration)
                 ssims.append(preview_ssim)
 
@@ -236,10 +242,12 @@ while iteration < cfg.iterations + 1:
         if iteration <= cfg.half_res_iters:
             raytracer.set_render_resolution(cam0.image_width // 2, cam0.image_height // 2)
             images = scene.train_images_halfres
+            mask = scene.valid_mask_halfres
             batch_size = cfg.half_res_batch_size
         else:
             raytracer.set_render_resolution(cam0.image_width, cam0.image_height)
             images = scene.train_images
+            mask = scene.valid_mask
             batch_size = 1
 
         # *** Forward pass
@@ -252,11 +260,18 @@ while iteration < cfg.iterations + 1:
 
             # * Compute loss
             target = images[camera.image_name]
-            loss = F.l1_loss(render_unclamped, target)
+            if mask is not None:
+                loss = masked_l1(render_unclamped, target, mask)
+            else:
+                loss = F.l1_loss(render_unclamped, target)
             if cfg.lambda_ssim > 0.0:
                 from fused_ssim import fused_ssim
 
-                ssim_score = fused_ssim(render_unclamped[None], target[None])
+                if mask is not None:
+                    m = mask.unsqueeze(0)
+                    ssim_score = fused_ssim((render_unclamped * m)[None], (target * m)[None])
+                else:
+                    ssim_score = fused_ssim(render_unclamped[None], target[None])
                 loss = (1.0 - cfg.lambda_ssim) * loss + cfg.lambda_ssim * (1.0 - ssim_score)
 
             # *** Backward pass and optimization step
@@ -287,8 +302,12 @@ while iteration < cfg.iterations + 1:
             raytracer.cuda_module.rebuild_bvh()
 
         # * Log training curve
-        training_l1 = F.l1_loss(render, target).item()
-        training_psnr = psnr(render[None], target[None]).item()
+        if mask is not None:
+            training_l1 = masked_l1(render, target, mask).item()
+            training_psnr = masked_psnr(render, target, mask).item()
+        else:
+            training_l1 = F.l1_loss(render, target).item()
+            training_psnr = psnr(render[None], target[None]).item()
         l1_avg += training_l1 / cfg.log_loss_interval
         psnr_avg += training_psnr / cfg.log_loss_interval
         if iteration % cfg.log_loss_interval == 0 or iteration == 1:
@@ -350,6 +369,7 @@ while iteration < cfg.iterations + 1:
             print(f"{iteration:05d}", end="", file=psnr_log)
             print(f"{iteration:05d}", end="", file=ssim_log)
             scores = {}
+            eval_mask = scene.valid_mask
             for split, cams, images in [
                 ("train", scene.train_cameras, scene.train_images),
                 ("test", scene.test_cameras, scene.test_images),
@@ -363,20 +383,34 @@ while iteration < cfg.iterations + 1:
                 gts = [images[cam.image_name].cpu()[None] for cam in cams]
                 renders = torch.cat(renders, dim=0)
                 gts = torch.cat(gts, dim=0)
-                psnr_split = mean(
-                    [
-                        psnr(renders[idx][None].cuda(), gts[idx][None].cuda()).item()
-                        for idx in range(len(cams))
-                    ]
-                )
-                ssim_split = mean(
-                    [
-                        ssim(
-                            renders[idx][None].cuda(), gts[idx][None].cuda(), downsample=False
-                        ).item()
-                        for idx in range(len(cams))
-                    ]
-                )
+                if eval_mask is not None:
+                    psnr_split = mean(
+                        [
+                            masked_psnr(renders[idx].cuda(), gts[idx].cuda(), eval_mask).item()
+                            for idx in range(len(cams))
+                        ]
+                    )
+                    ssim_split = mean(
+                        [
+                            masked_ssim(renders[idx].cuda(), gts[idx].cuda(), eval_mask).item()
+                            for idx in range(len(cams))
+                        ]
+                    )
+                else:
+                    psnr_split = mean(
+                        [
+                            psnr(renders[idx][None].cuda(), gts[idx][None].cuda()).item()
+                            for idx in range(len(cams))
+                        ]
+                    )
+                    ssim_split = mean(
+                        [
+                            ssim(
+                                renders[idx][None].cuda(), gts[idx][None].cuda(), downsample=False
+                            ).item()
+                            for idx in range(len(cams))
+                        ]
+                    )
                 writer.add_scalar(f"psnr_eval_on_{split}", psnr_split, iteration)
                 writer.add_scalar(f"ssim_eval_on_{split}", ssim_split, iteration)
                 print(f" {psnr_split:02.2f}", end="", file=psnr_log)

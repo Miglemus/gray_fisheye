@@ -124,3 +124,23 @@ def set_seeds(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def masked_l1(render, target, mask):
+    """L1 averaged over valid pixels only. ``render``/``target`` are [C, H, W], ``mask`` is [H, W]."""
+    m = mask.unsqueeze(0)
+    diff = (render - target).abs() * m
+    return diff.sum() / m.sum().clamp_min(1).mul(render.shape[0])
+
+
+def masked_psnr(render, target, mask):
+    """PSNR (dB) computed over valid pixels only (max signal value 1.0)."""
+    m = mask.unsqueeze(0)
+    mse = ((render - target) ** 2 * m).sum() / m.sum().clamp_min(1).mul(render.shape[0])
+    return -10.0 * torch.log10(mse.clamp_min(1e-12))
+
+
+def masked_ssim(render, target, mask):
+    """SSIM with invalid pixels zeroed in both render and target. Inputs are [C, H, W]."""
+    m = mask.unsqueeze(0)
+    return ssim((render * m)[None], (target * m)[None], downsample=False)
