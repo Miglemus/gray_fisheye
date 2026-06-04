@@ -19,6 +19,12 @@ class DatasetConfig:
     fisheye: Annotated[bool, arg(aliases=["-f"])] = False  # * Train on raw fisheye images with OPENCV_FISHEYE rays
     colmap_sparse_subdir: str = "sparse/0"  # * Overridden to the distorted reconstruction when fisheye=True
 
+    # * Fisheye vignette masking (only applied when fisheye=True); ignores invalid pixels in loss and metrics
+    fisheye_mask_geometric: bool = True  # * Mask pixels outside the lens disk (radial mask)
+    # * Aggressivity of the radial mask: 1.0 == exact 90 deg disk (baseline); values < 1 shrink the
+    # * valid radius to also cover the vignetted rim. Masked surface grows ~ (1 - radius_scale**2).
+    fisheye_mask_radius_scale: float = 0.95
+
     def __post_init__(self):
         # * Fisheye uses the distorted COLMAP reconstruction and the raw (resized) images
         if self.fisheye:
