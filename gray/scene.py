@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import torch
 import struct
 import json
+import copy
 
 executor = ThreadPoolExecutor()
 
@@ -22,6 +23,151 @@ class BasicPointCloud:
     radius: float
     normals: Optional[np.array] = None
     distances_to_cam: Optional[np.array] = None
+
+
+@dataclass
+class ColmapViews:
+    train_cameras: List[CameraInfo]
+    test_cameras: List[CameraInfo]
+    train_images: Dict[str, torch.Tensor]
+    test_images: Dict[str, torch.Tensor]
+    valid_mask: Optional[torch.Tensor] = None
+    valid_mask_halfres: Optional[torch.Tensor] = None
+    train_images_halfres: Dict[str, torch.Tensor] = field(default_factory=dict)
+
+
+def _read_colmap_cameras(sparse_dir):
+    try:
+        cameras_extrinsic_file = os.path.join(sparse_dir, "images.bin")
+        cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.bin")
+        return (
+            colmap.read_extrinsics_binary(cameras_extrinsic_file),
+            colmap.read_intrinsics_binary(cameras_intrinsic_file),
+        )
+    except FileNotFoundError:
+        cameras_extrinsic_file = os.path.join(sparse_dir, "images.txt")
+        cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.txt")
+        return (
+            colmap.read_extrinsics_text(cameras_extrinsic_file),
+            colmap.read_intrinsics_text(cameras_intrinsic_file),
+        )
+
+
+def load_colmap_views(
+    cfg: Config,
+    *,
+    sparse_subdir: str,
+    images_dir: str,
+    apply_fisheye_mask: bool = False,
+    llffhold=8,
+    load_images=True,
+    build_halfres=False,
+) -> ColmapViews:
+    path = cfg.source_path
+    sparse_dir = os.path.join(path, sparse_subdir)
+    cam_extrinsics, cam_intrinsics = _read_colmap_cameras(sparse_dir)
+
+    # * Select views for eval
+    if cfg.eval:
+        if "360" in path:
+            llffhold = 8
+        if llffhold:
+            print("------------LLFF HOLD-------------")
+            cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
+            cam_names = sorted(cam_names)
+            test_cam_names_list = [
+                name for idx, name in enumerate(cam_names) if idx % llffhold == 0
+            ]
+        else:
+            with open(os.path.join(sparse_dir, "test.txt"), "r") as file:
+                test_cam_names_list = [line.strip() for line in file]
+    else:
+        test_cam_names_list = []
+
+    view_cfg = copy.copy(cfg)
+    view_cfg.colmap_sparse_subdir = sparse_subdir
+    view_cfg.images_dir = images_dir
+
+    cam_infos_unsorted = []
+    for key in cam_extrinsics:
+        extr = cam_extrinsics[key]
+        intr = cam_intrinsics[extr.camera_id]
+        cam_info = CameraInfo.from_colmap(
+            view_cfg, key, extr, intr, extr.name in test_cam_names_list
+        )
+        cam_infos_unsorted.append(cam_info)
+    cam_infos = sorted(cam_infos_unsorted.copy(), key=lambda x: x.image_name)
+    train_cam_infos = [c for c in cam_infos if not c.is_test]
+    test_cam_infos = [c for c in cam_infos if c.is_test]
+
+    def load_image(cam):
+        image = read_image(cam.image_path, ImageReadMode.RGB).cuda() / 255
+        return cam.image_name, image
+
+    if load_images:
+        train_images = dict(executor.map(load_image, train_cam_infos))
+        test_images = dict(executor.map(load_image, test_cam_infos))
+    else:
+        train_images = {}
+        test_images = {}
+
+    train_images_halfres = {}
+    if build_halfres and cfg.half_res_iters > 0:
+        train_images_halfres = {
+            name: F.interpolate(image[None], scale_factor=0.5, mode="area")[0]
+            for name, image in train_images.items()
+        }
+
+    valid_mask = None
+    valid_mask_halfres = None
+    if apply_fisheye_mask and cfg.fisheye_mask_geometric:
+        from gray.fisheye_mask import build_fisheye_mask
+
+        ref_cam = train_cam_infos[0] if train_cam_infos else test_cam_infos[0]
+        if load_images:
+            ref_image = train_images[ref_cam.image_name] if train_cam_infos else test_images[ref_cam.image_name]
+            height, width = ref_image.shape[-2], ref_image.shape[-1]
+            device = ref_image.device
+        else:
+            height, width = ref_cam.image_height, ref_cam.image_width
+            device = "cpu"
+        valid_mask = build_fisheye_mask(ref_cam, height, width, device, cfg)
+        if build_halfres and cfg.half_res_iters > 0 and load_images:
+            valid_mask_halfres = (
+                F.interpolate(valid_mask[None, None].float(), scale_factor=0.5, mode="nearest")[
+                    0, 0
+                ]
+                > 0.5
+            )
+
+    return ColmapViews(
+        train_cameras=train_cam_infos,
+        test_cameras=test_cam_infos,
+        train_images=train_images,
+        test_images=test_images,
+        valid_mask=valid_mask,
+        valid_mask_halfres=valid_mask_halfres,
+        train_images_halfres=train_images_halfres,
+    )
+
+
+def peek_max_resolution(cfg: Config, mode_specs) -> Tuple[int, int]:
+    max_width = 0
+    max_height = 0
+    for sparse_subdir, images_dir in mode_specs:
+        views = load_colmap_views(
+            cfg,
+            sparse_subdir=sparse_subdir,
+            images_dir=images_dir,
+            load_images=False,
+        )
+        cams = views.train_cameras or views.test_cameras
+        if not cams:
+            continue
+        cam = cams[0]
+        max_width = max(max_width, cam.image_width)
+        max_height = max(max_height, cam.image_height)
+    return max_width, max_height
 
 
 @dataclass
@@ -41,49 +187,16 @@ class SceneInfo:
     @staticmethod
     def from_colmap(cfg: Config, llffhold=8, parse_point_cloud=True) -> SceneInfo:
         path = cfg.source_path
-        sparse_dir = os.path.join(path, cfg.colmap_sparse_subdir)
-
-        # * Read colmap data
-        try:
-            cameras_extrinsic_file = os.path.join(sparse_dir, "images.bin")
-            cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.bin")
-            cam_extrinsics = colmap.read_extrinsics_binary(cameras_extrinsic_file)
-            cam_intrinsics = colmap.read_intrinsics_binary(cameras_intrinsic_file)
-        except FileNotFoundError:
-            cameras_extrinsic_file = os.path.join(sparse_dir, "images.txt")
-            cameras_intrinsic_file = os.path.join(sparse_dir, "cameras.txt")
-            cam_extrinsics = colmap.read_extrinsics_text(cameras_extrinsic_file)
-            cam_intrinsics = colmap.read_intrinsics_text(cameras_intrinsic_file)
-
-        # * Select views for eval
-        if cfg.eval:
-            if "360" in path:
-                llffhold = 8
-            if llffhold:
-                print("------------LLFF HOLD-------------")
-                cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
-                cam_names = sorted(cam_names)
-                test_cam_names_list = [
-                    name for idx, name in enumerate(cam_names) if idx % llffhold == 0
-                ]
-            else:
-                with open(os.path.join(sparse_dir, "test.txt"), "r") as file:
-                    test_cam_names_list = [line.strip() for line in file]
-        else:
-            test_cam_names_list = []
-
-        # * Parse cameras
-        cam_infos_unsorted = []
-        for key in cam_extrinsics:
-            extr = cam_extrinsics[key]
-            intr = cam_intrinsics[extr.camera_id]
-            cam_info = CameraInfo.from_colmap(
-                cfg, key, extr, intr, extr.name in test_cam_names_list
-            )
-            cam_infos_unsorted.append(cam_info)
-        cam_infos = sorted(cam_infos_unsorted.copy(), key=lambda x: x.image_name)
-        train_cam_infos = [c for c in cam_infos if not c.is_test]
-        test_cam_infos = [c for c in cam_infos if c.is_test]
+        views = load_colmap_views(
+            cfg,
+            sparse_subdir=cfg.colmap_sparse_subdir,
+            images_dir=cfg.images_dir,
+            apply_fisheye_mask=cfg.fisheye,
+            llffhold=llffhold,
+            build_halfres=True,
+        )
+        train_cam_infos = views.train_cameras
+        test_cam_infos = views.test_cameras
         radius = get_nerf_pp_norm(train_cam_infos)["radius"]
 
         # * Parse point cloud, cache to safetensors for fast loading
@@ -127,53 +240,17 @@ class SceneInfo:
             pcd = None
             pc_path = None
 
-        # * Parse images, read off-thread to avoid blocking
-        def load_image(cam):
-            image = read_image(cam.image_path, ImageReadMode.RGB).cuda() / 255
-            return cam.image_name, image
-
-        train_futures = executor.map(load_image, train_cam_infos)
-        test_futures = executor.map(load_image, test_cam_infos)
-        train_images = dict(train_futures)
-        test_images = dict(test_futures)
-
-        # * Precompute half-resolution for warmup phase
-        train_images_halfres = {}
-        if cfg.half_res_iters > 0:
-            train_images_halfres = {
-                name: F.interpolate(image[None], scale_factor=0.5, mode="area")[0]
-                for name, image in train_images.items()
-            }
-
-        # * Shared radial mask (identical intrinsics / resolution across views)
-        valid_mask = None
-        valid_mask_halfres = None
-        if cfg.fisheye and cfg.fisheye_mask_geometric:
-            from gray.fisheye_mask import build_fisheye_mask
-
-            ref_cam = train_cam_infos[0] if train_cam_infos else test_cam_infos[0]
-            ref_image = train_images[ref_cam.image_name] if train_cam_infos else test_images[ref_cam.image_name]
-            height, width = ref_image.shape[-2], ref_image.shape[-1]
-            valid_mask = build_fisheye_mask(ref_cam, height, width, ref_image.device, cfg)
-            if cfg.half_res_iters > 0:
-                valid_mask_halfres = (
-                    F.interpolate(valid_mask[None, None].float(), scale_factor=0.5, mode="nearest")[
-                        0, 0
-                    ]
-                    > 0.5
-                )
-
         return SceneInfo(
             point_cloud=pcd,
             train_cameras=train_cam_infos,
             test_cameras=test_cam_infos,
-            train_images=train_images,
-            test_images=test_images,
+            train_images=views.train_images,
+            test_images=views.test_images,
             pc_path=pc_path,
             is_nerf_synthetic=False,
-            train_images_halfres=train_images_halfres,
-            valid_mask=valid_mask,
-            valid_mask_halfres=valid_mask_halfres,
+            train_images_halfres=views.train_images_halfres,
+            valid_mask=views.valid_mask,
+            valid_mask_halfres=views.valid_mask_halfres,
         )
 
     @staticmethod
