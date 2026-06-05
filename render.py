@@ -1,5 +1,6 @@
 from gray.imports import *
 from gray.prelude import *
+from gray.eval import load_eval_views, scene_to_views
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -10,6 +11,7 @@ class RenderCLI:
 
     iteration: Annotated[int, arg(aliases=["-t"])] = -1
     splits: List[Literal["train", "test"]] = field(default_factory=lambda: ["test"])
+    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["pinhole"])
 
     # * Optional changes to this image size
     width: Optional[int] = None
@@ -39,63 +41,89 @@ else:
     iteration = search_for_max_iteration(cli.model_path)
     save_path = os.path.join(cli.model_path, f"gaussians_{iteration:05d}.safetensors")
 
-# * Load the scene and raytracer
-# * Fall back to the cameras saved in the model's cameras.json when the colmap
-# * dataset is unavailable (e.g. rendering pretrained scenes without the data).
-try:
-    scene = SceneInfo.from_colmap(cfg)
-except FileNotFoundError:
-    print(
-        f"Colmap dataset not found at '{cfg.source_path}'; "
-        f"falling back to cameras saved in the model's cameras.json"
-    )
-    scene = SceneInfo.from_cameras_json(cli.model_path)
-cam0 = scene.train_cameras[0]
+eval_modes = cli.eval_modes or cfg.resolved_eval_modes()
+
+
+def load_render_views(mode, *, load_images=True):
+    try:
+        return load_eval_views(cfg, mode, load_images=load_images)
+    except FileNotFoundError:
+        if cli.eval_modes:
+            raise
+        print(
+            f"Colmap dataset not found at '{cfg.source_path}'; "
+            f"falling back to cameras saved in the model's cameras.json"
+        )
+        return scene_to_views(SceneInfo.from_cameras_json(cli.model_path, parse_images=load_images))
+
+
+probe_views = {mode: load_render_views(mode, load_images=False) for mode in eval_modes}
+all_cameras = [
+    cam
+    for views in probe_views.values()
+    for cams in [views.train_cameras, views.test_cameras]
+    for cam in cams[:1]
+]
+if not all_cameras:
+    raise ValueError("No cameras found for rendering")
+max_width = max(cam.image_width for cam in all_cameras)
+max_height = max(cam.image_height for cam in all_cameras)
 raytracer = Raytracer.from_safetensors(
     cfg,
     save_path,
-    cli.width or cam0.image_width,
-    cli.height or cam0.image_height,
+    cli.width or max_width,
+    cli.height or max_height,
     inference_only=True,
 )
 
 # * Render images
 print("Rendering iteration", iteration)
 executor = ThreadPoolExecutor()
-for split in cli.splits:
-    dir_name = os.path.join(cli.model_path, split, f"{iteration:05d}")
-    os.makedirs(os.path.join(dir_name, "renders"), exist_ok=True)
-    os.makedirs(os.path.join(dir_name, "gt"), exist_ok=True)
+for mode in eval_modes:
+    views = load_render_views(mode)
+    for split in cli.splits:
+        dir_name = os.path.join(cli.model_path, split, f"{iteration:05d}", mode)
+        os.makedirs(os.path.join(dir_name, "renders"), exist_ok=True)
+        os.makedirs(os.path.join(dir_name, "gt"), exist_ok=True)
 
-    if split == "train":
-        cameras, images = scene.train_cameras, scene.train_images
-    elif split == "test":
-        cameras, images = scene.test_cameras, scene.test_images
+        if views.valid_mask is not None:
+            save_image(views.valid_mask.float()[None], os.path.join(dir_name, "valid_mask.png"))
 
-    if cli.znear_list is not None and len(cli.znear_list) != len(cameras):
-        raise ValueError(
-            f"Expected {len(cameras)} znear values for split '{split}', got {len(cli.znear_list)}"
-        )
+        if split == "train":
+            cameras, images = views.train_cameras, views.train_images
+        elif split == "test":
+            cameras, images = views.test_cameras, views.test_images
 
-    futures = []
-
-    for i, cam in enumerate(cameras):
-        gt = images.get(cam.image_name)
-        if cli.fov_y is not None:
-            cam.fov_y = cli.fov_y
-
-        with torch.no_grad():
-            znear = cli.znear_list[i] if cli.znear_list is not None else cli.znear
-            render = raytracer(cam, znear=znear).clamp(0, 1)
-
-        futures.append(
-            executor.submit(save_image, render, os.path.join(dir_name, "renders", f"{i:05d}.png"))
-        )
-        # * Ground truth is only available when the dataset images are present.
-        if gt is not None:
-            futures.append(
-                executor.submit(save_image, gt, os.path.join(dir_name, "gt", f"{i:05d}.png"))
+        if cli.znear_list is not None and len(cli.znear_list) != len(cameras):
+            raise ValueError(
+                f"Expected {len(cameras)} znear values for split '{split}', got {len(cli.znear_list)}"
             )
 
-    for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Saving {split} images"):
-        pass
+        futures = []
+
+        for i, cam in enumerate(cameras):
+            gt = images.get(cam.image_name)
+            if cli.fov_y is not None:
+                cam.fov_y = cli.fov_y
+
+            with torch.no_grad():
+                znear = cli.znear_list[i] if cli.znear_list is not None else cli.znear
+                raytracer.set_render_resolution(
+                    cli.width or cam.image_width,
+                    cli.height or cam.image_height,
+                )
+                render = raytracer(cam, znear=znear).clamp(0, 1)
+
+            futures.append(
+                executor.submit(save_image, render, os.path.join(dir_name, "renders", f"{i:05d}.png"))
+            )
+            # * Ground truth is only available when the dataset images are present.
+            if gt is not None:
+                futures.append(
+                    executor.submit(save_image, gt, os.path.join(dir_name, "gt", f"{i:05d}.png"))
+                )
+
+        for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Saving {mode} {split} images"):
+            pass
+    del views
+    torch.cuda.empty_cache()
