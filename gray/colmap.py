@@ -58,6 +58,11 @@ CAMERA_MODEL_NAMES = dict(
 )
 
 
+def best_reconstruction_model(maps):
+    """Return (model_index, reconstruction) with the most registered images."""
+    return max(maps.items(), key=lambda item: item[1].num_reg_images())
+
+
 def qvec2rotmat(qvec):
     return np.array(
         [
