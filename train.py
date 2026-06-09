@@ -32,6 +32,12 @@ if os.path.exists(cfg.model_path) and not cfg.yes:
 from gray.imports import *
 from gray.prelude import *
 from gray.memory import GpuMemoryMonitor
+from gray.eval import (
+    compute_view_metrics,
+    load_eval_views,
+    max_framebuffer_size,
+    scene_to_views,
+)
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
 from torch.utils.tensorboard import SummaryWriter
@@ -46,10 +52,19 @@ if scene.test_cameras:
     test_cam0 = scene.test_cameras[0]
     if cfg.preview_test_image_name:
         test_cam0 = {cam.image_name: cam for cam in scene.test_cameras}[cfg.preview_test_image_name]
+eval_modes = cfg.resolved_eval_modes()
+training_eval_mode = "fisheye" if cfg.fisheye else "pinhole"
+eval_views = {}
+for mode in eval_modes:
+    if mode == training_eval_mode:
+        eval_views[mode] = scene_to_views(scene)
+    else:
+        eval_views[mode] = load_eval_views(cfg, mode)
+max_width, max_height = max_framebuffer_size(scene, eval_views)
 
 # *** Init gaussians and raytracer
 raytracer = Raytracer.from_point_cloud(
-    cfg, scene.point_cloud, cam0.image_width, cam0.image_height
+    cfg, scene.point_cloud, max_width, max_height
 )
 if cfg.exposure_comp_enabled:
     raytracer.init_exposure_comp(scene.train_cameras)
@@ -128,10 +143,14 @@ psnr_avg = 0.0
 last_psnr_avg = None
 losses_log = open(os.path.join(cfg.model_path, f"losses.csv"), "w")
 print("iteration l1 psnr", file=losses_log, flush=True)
-psnr_log = open(os.path.join(cfg.model_path, f"psnr.csv"), "w")
-print("iteration train test", file=psnr_log, flush=True)
-ssim_log = open(os.path.join(cfg.model_path, f"ssim.csv"), "w")
-print("iteration train test", file=ssim_log, flush=True)
+psnr_logs = {}
+ssim_logs = {}
+for mode in eval_modes:
+    suffix = "" if len(eval_modes) == 1 else f"_{mode}"
+    psnr_logs[mode] = open(os.path.join(cfg.model_path, f"psnr{suffix}.csv"), "w")
+    print("iteration train test", file=psnr_logs[mode], flush=True)
+    ssim_logs[mode] = open(os.path.join(cfg.model_path, f"ssim{suffix}.csv"), "w")
+    print("iteration train test", file=ssim_logs[mode], flush=True)
 time_log = open(os.path.join(cfg.model_path, f"time.csv"), "w")
 print("iteration elapsed_time", file=time_log, flush=True)
 num_gaussians_log = open(os.path.join(cfg.model_path, f"num_gaussians.csv"), "w")
@@ -365,61 +384,26 @@ while iteration < cfg.iterations + 1:
         # * Evaluate PSNR
         start_val = time.time()
         if iteration in cfg.test_iters:
-            raytracer.set_render_resolution(cam0.image_width, cam0.image_height)
-            print(f"{iteration:05d}", end="", file=psnr_log)
-            print(f"{iteration:05d}", end="", file=ssim_log)
-            scores = {}
-            eval_mask = scene.valid_mask
-            for split, cams, images in [
-                ("train", scene.train_cameras, scene.train_images),
-                ("test", scene.test_cameras, scene.test_images),
-            ]:
-                if not cams:
-                    continue
-                with torch.no_grad():
-                    renders = [
-                        (raytracer(cam).clamp(0, 1).cpu()[None] * 255).floor() / 255 for cam in cams
-                    ]
-                gts = [images[cam.image_name].cpu()[None] for cam in cams]
-                renders = torch.cat(renders, dim=0)
-                gts = torch.cat(gts, dim=0)
-                if eval_mask is not None:
-                    psnr_split = mean(
-                        [
-                            masked_psnr(renders[idx].cuda(), gts[idx].cuda(), eval_mask).item()
-                            for idx in range(len(cams))
-                        ]
+            for mode in eval_modes:
+                print(f"{iteration:05d}", end="", file=psnr_logs[mode])
+                print(f"{iteration:05d}", end="", file=ssim_logs[mode])
+                metrics = compute_view_metrics(raytracer, eval_views[mode])
+                for split in ["train", "test"]:
+                    if split not in metrics:
+                        continue
+                    psnr_split, ssim_split = metrics[split]
+                    writer.add_scalar(f"psnr_eval_{mode}_{split}", psnr_split, iteration)
+                    writer.add_scalar(f"ssim_eval_{mode}_{split}", ssim_split, iteration)
+                    if len(eval_modes) == 1:
+                        writer.add_scalar(f"psnr_eval_on_{split}", psnr_split, iteration)
+                        writer.add_scalar(f"ssim_eval_on_{split}", ssim_split, iteration)
+                    print(f" {psnr_split:02.2f}", end="", file=psnr_logs[mode])
+                    print(f" {ssim_split:0.4f}", end="", file=ssim_logs[mode])
+                    print(
+                        f"[ITER {iteration}] {mode} {split.capitalize()} PSNR {psnr_split:02.2f} SSIM {ssim_split:0.4f}"
                     )
-                    ssim_split = mean(
-                        [
-                            masked_ssim(renders[idx].cuda(), gts[idx].cuda(), eval_mask).item()
-                            for idx in range(len(cams))
-                        ]
-                    )
-                else:
-                    psnr_split = mean(
-                        [
-                            psnr(renders[idx][None].cuda(), gts[idx][None].cuda()).item()
-                            for idx in range(len(cams))
-                        ]
-                    )
-                    ssim_split = mean(
-                        [
-                            ssim(
-                                renders[idx][None].cuda(), gts[idx][None].cuda(), downsample=False
-                            ).item()
-                            for idx in range(len(cams))
-                        ]
-                    )
-                writer.add_scalar(f"psnr_eval_on_{split}", psnr_split, iteration)
-                writer.add_scalar(f"ssim_eval_on_{split}", ssim_split, iteration)
-                print(f" {psnr_split:02.2f}", end="", file=psnr_log)
-                print(f" {ssim_split:0.4f}", end="", file=ssim_log)
-                print(
-                    f"[ITER {iteration}] {split.capitalize()} PSNR {psnr_split:02.2f} SSIM {ssim_split:0.4f}"
-                )
-            print(file=psnr_log, flush=True)
-            print(file=ssim_log, flush=True)
+                print(file=psnr_logs[mode], flush=True)
+                print(file=ssim_logs[mode], flush=True)
 
             # * Log elapsed time
             start += time.time() - start_val  # * remove time spent for evaluation

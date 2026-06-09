@@ -18,6 +18,7 @@ class DatasetConfig:
 
     fisheye: Annotated[bool, arg(aliases=["-f"])] = False  # * Train on raw fisheye images with OPENCV_FISHEYE rays
     colmap_sparse_subdir: str = "sparse/0"  # * Overridden to the distorted reconstruction when fisheye=True
+    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["pinhole"])
 
     # * Fisheye vignette masking (only applied when fisheye=True); ignores invalid pixels in loss and metrics
     fisheye_mask_geometric: bool = True  # * Mask pixels outside the lens disk (radial mask)
@@ -170,3 +171,8 @@ class Config(RaytracerConfig, DatasetConfig):
     def __post_init__(self):
         DatasetConfig.__post_init__(self)
         RaytracerConfig.__post_init__(self)
+
+    def resolved_eval_modes(self) -> List[Literal["pinhole", "fisheye"]]:
+        if self.eval_modes:
+            return self.eval_modes
+        return ["fisheye"] if self.fisheye else ["pinhole"]
