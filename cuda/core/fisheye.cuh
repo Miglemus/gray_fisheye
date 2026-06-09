@@ -28,29 +28,50 @@ __device__ __forceinline__ float3 fisheye_unproject(const float *params, float u
         return make_float3(0.0f, 0.0f, 1.0f);
     }
 
-    // * Newton iterations to invert theta_d = theta + k1*t^3 + k2*t^5 + k3*t^7 + k4*t^9
-    float theta = theta_d;
-    for (int i = 0; i < 10; i++) {
-        float t2 = theta * theta;
-        float t4 = t2 * t2;
-        float t6 = t4 * t2;
-        float t8 = t4 * t4;
-        float f = theta * (1.0f + k1 * t2 + k2 * t4 + k3 * t6 + k4 * t8) - theta_d;
-        float fp = 1.0f + 3.0f * k1 * t2 + 5.0f * k2 * t4 + 7.0f * k3 * t6 + 9.0f * k4 * t8;
-        theta -= f / fp;
-    }
+    constexpr float FISHEYE_MAX_THETA = 1.5707963f; // 90 degrés
 
-    // *** Reject pixels beyond the lens' imaged circle (the black vignette corners). theta = atan(r)
-    // *** is bounded to [0, pi/2) in the OpenCV fisheye model, so pixels inverting to theta >= 90 deg
-    // *** lie outside the valid field of view. This matches the imaged disk of this lens almost
-    // *** exactly (the GT is >99% non-black inside 90 deg and transitions to vignette beyond it).
-    // *** A zero-length direction is treated by the caller as an inactive (background) pixel.
-    constexpr float FISHEYE_MAX_THETA = 1.5707963f; // 90 degrees
-    if (theta >= FISHEYE_MAX_THETA) {
+    // * Step 1: Mathematical existence of a root check ***
+    // f(0) = -theta_d is ALWAYS negative.
+    // For a root to exist in [0, pi/2], f(pi/2) MUST be positive. (Assuming monotonic function over [0, pi/2])
+    float t2 = FISHEYE_MAX_THETA * FISHEYE_MAX_THETA;
+    float t4 = t2 * t2;
+    float t6 = t4 * t2;
+    float t8 = t4 * t4;
+    float f_high = FISHEYE_MAX_THETA * (1.0f + k1 * t2 + k2 * t4 + k3 * t6 + k4 * t8) - theta_d;
+
+    // If f(pi/2) <= 0, there is no valid root in the optical dome (pixel outside field of view / vignette)
+    if (f_high <= 0.0f) {
         return make_float3(0.0f, 0.0f, 0.0f);
     }
 
-    // * Unit bearing (sin(theta)*dir, cos(theta)); stable for all valid theta
+    // *** ÉTAPE 2 : Algorithme de Bissection (Dichotomie) ***
+    float low = 0.0f;
+    float high = FISHEYE_MAX_THETA;
+    float theta = 0.0f;
+
+    // 20 itérations donnent une précision de pi / (2^21) ~= 7.5e-7 radians.
+    // Un nombre d'itérations fixe empêche la divergence de warp sur le GPU.
+    #pragma unroll
+    for (int i = 0; i < 20; i++) {
+        theta = 0.5f * (low + high);
+        
+        t2 = theta * theta;
+        t4 = t2 * t2;
+        t6 = t4 * t2;
+        t8 = t4 * t4;
+        float f = theta * (1.0f + k1 * t2 + k2 * t4 + k3 * t6 + k4 * t8) - theta_d;
+
+        if (f > 0.0f) {
+            high = theta; // La racine est dans la moitié inférieure
+        } else {
+            low = theta;  // La racine est dans la moitié supérieure
+        }
+    }
+    
+    // Valeur finale convergée
+    theta = 0.5f * (low + high);
+
+    // * Calcul du vecteur unitaire directionnel (stable et garanti sans oscillation)
     float sin_theta = sinf(theta);
     float inv_theta_d = 1.0f / theta_d;
     return make_float3(sin_theta * xd * inv_theta_d, sin_theta * yd * inv_theta_d, cosf(theta));
