@@ -4,6 +4,9 @@ from gray.eval import load_eval_views, scene_to_views
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from run_colmap_fixed import CameraConfig, load_config
+import os
+
 
 @dataclass
 class RenderCLI:
@@ -14,6 +17,7 @@ class RenderCLI:
     eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["pinhole"])
 
     # * Optional changes to this image size
+    intrinsics: Annotated[Optional[os.PathLike], arg(help="JSON file with camera parameters; defaults to source_path parameters")] = None
     width: Optional[int] = None
     height: Optional[int] = None
     fov_y: Optional[float] = None
@@ -29,6 +33,10 @@ cli, unknown_args = tyro.cli(RenderCLI, return_unknown_args=True)
 # * Load the config from JSON and allow for Config overrides
 saved_cli_path = os.path.join(cli.model_path, "config.json")
 cfg = tyro.cli(Config, args=unknown_args, default=Config(**json.load(open(saved_cli_path, "r"))))
+
+camera_config = None
+if cli.intrinsics is not None:
+    camera_config = load_config(Path(cli.intrinsics))
 
 # * Make it possible to point directly to a gaussians file
 if cli.model_path.endswith(".safetensors"):
@@ -112,6 +120,8 @@ for mode in eval_modes:
                     cli.width or cam.image_width,
                     cli.height or cam.image_height,
                 )
+                if camera_config is not None:
+                    cam.intrinsics = np.array(camera_config.params)
                 render = raytracer(cam, znear=znear).clamp(0, 1)
 
             futures.append(
