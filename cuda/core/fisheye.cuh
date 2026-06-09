@@ -27,17 +27,35 @@ __device__ __forceinline__ float3 fisheye_unproject(const float *params, float u
     if (theta_d < 1e-8f) {
         return make_float3(0.0f, 0.0f, 1.0f);
     }
+    constexpr float FISHEYE_MAX_THETA = 1.5707963f; // 90 degrees
 
     // * Newton iterations to invert theta_d = theta + k1*t^3 + k2*t^5 + k3*t^7 + k4*t^9
+    float f = 0.0f;
     float theta = theta_d;
+
+    // * first evaluate which values of theta_d have no solution
+    float t2 = FISHEYE_MAX_THETA * FISHEYE_MAX_THETA;
+    float t4 = t2 * t2;
+    float t6 = t4 * t2;
+    float t8 = t4 * t4;
+    float theta_d_max = FISHEYE_MAX_THETA * (1.0f + k1 * t2 + k2 * t4 + k3 * t2 * t6 + k4 * t2 * t8);
+
+    // * if theta_d is too large, return 0
+    if (theta_d > theta_d_max) {
+        return make_float3(0.0f, 0.0f, 0.0f);
+    }
+
     for (int i = 0; i < 10; i++) {
-        float t2 = theta * theta;
-        float t4 = t2 * t2;
-        float t6 = t4 * t2;
-        float t8 = t4 * t4;
-        float f = theta * (1.0f + k1 * t2 + k2 * t4 + k3 * t6 + k4 * t8) - theta_d;
+        t2 = theta * theta;
+        t4 = t2 * t2;
+        t6 = t4 * t2;
+        t8 = t4 * t4;
+        f = theta * (1.0f + k1 * t2 + k2 * t4 + k3 * t6 + k4 * t8) - theta_d;
         float fp = 1.0f + 3.0f * k1 * t2 + 5.0f * k2 * t4 + 7.0f * k3 * t6 + 9.0f * k4 * t8;
         theta -= f / fp;
+        if (theta < 0.0f || theta > FISHEYE_MAX_THETA) {
+            return make_float3(0.0f, 0.0f, 0.0f);
+        }
     }
 
     // *** Reject pixels beyond the lens' imaged circle (the black vignette corners). theta = atan(r)
@@ -45,8 +63,7 @@ __device__ __forceinline__ float3 fisheye_unproject(const float *params, float u
     // *** lie outside the valid field of view. This matches the imaged disk of this lens almost
     // *** exactly (the GT is >99% non-black inside 90 deg and transitions to vignette beyond it).
     // *** A zero-length direction is treated by the caller as an inactive (background) pixel.
-    constexpr float FISHEYE_MAX_THETA = 1.5707963f; // 90 degrees
-    if (theta >= FISHEYE_MAX_THETA) {
+    if (theta >= FISHEYE_MAX_THETA || fabsf(f) > 1e-6f) {
         return make_float3(0.0f, 0.0f, 0.0f);
     }
 
