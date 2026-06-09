@@ -971,7 +971,9 @@ if __name__ == "__main__":
         if response not in ("y", "yes"):
             exit(0)
 
-    setattr(edgs_cli, "half_res_iters", 0) # This is added to avoir error caused by cli not having half_res_iters attribute
+    setattr(edgs_cli, "half_res_iters", 0)
+    setattr(edgs_cli, "colmap_sparse_subdir", "sparse/0")
+    setattr(edgs_cli, "fisheye", False)
     scene = SceneInfo.from_colmap(edgs_cli, parse_point_cloud=False)
 
     init_gaussians_with_corr(None, scene, edgs_cli, "cuda", verbose=False)

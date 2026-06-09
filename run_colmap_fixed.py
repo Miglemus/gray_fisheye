@@ -11,7 +11,7 @@ import pycolmap
 import tyro
 from tyro.conf import arg
 
-from gray.colmap import CAMERA_MODEL_NAMES
+from gray.colmap import CAMERA_MODEL_NAMES, best_reconstruction_model
 
 # * COLMAP parameter order for each supported camera model.
 CAMERA_PARAM_KEYS = {
@@ -148,13 +148,17 @@ def main():
         logging.error("Incremental mapping failed. Exiting.")
         raise SystemExit(1)
 
-    rec = maps[0]
+    best_idx, rec = best_reconstruction_model(maps)
+    if len(maps) > 1:
+        sizes = {i: r.num_reg_images() for i, r in maps.items()}
+        print(f"Multiple reconstructions {sizes}; using model {best_idx} ({rec.num_reg_images()} images)")
+
     cam = next(iter(rec.cameras.values()))
     print(f"Reconstruction camera: {cam}")
 
     pycolmap.undistort_images(
         output_path=src,
-        input_path=src / "distorted" / "sparse" / "0",
+        input_path=src / "distorted" / "sparse" / str(best_idx),
         image_path=src / "input",
         output_type="COLMAP",
     )
@@ -165,7 +169,7 @@ def main():
             continue
         shutil.move(str(f), str(src / "sparse" / "0" / f.name))
 
-    print(f"Done. Distorted sparse: {src / 'distorted' / 'sparse' / '0'}")
+    print(f"Done. Distorted sparse: {src / 'distorted' / 'sparse' / best_idx}")
     print(f"Undistorted sparse: {src / 'sparse' / '0'}")
 
 
