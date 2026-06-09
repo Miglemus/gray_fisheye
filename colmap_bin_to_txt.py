@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated, Optional
+
+import tyro
+from tyro.conf import arg
 
 import gray.colmap as colmap
 
@@ -110,27 +114,18 @@ def find_model_dir(scene_dir: Path, model_dir: Path | None) -> Path:
     )
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Convert COLMAP .bin model files to .txt format."
-    )
-    parser.add_argument("-s", "--scene", required=True, help="Scene directory")
-    parser.add_argument(
-        "--model-dir",
-        help="Path containing cameras.bin/images.bin/points3D.bin",
-    )
-    parser.add_argument(
-        "--output-dir",
-        help="Where to write cameras.txt/images.txt/points3D.txt (default: model dir)",
-    )
-    return parser.parse_args()
+@dataclass
+class CLI:
+    scene: Annotated[str, arg(aliases=["-s"])]
+    model_dir: Optional[str] = None
+    output_dir: Optional[str] = None
 
 
 def main() -> int:
-    args = parse_args()
-    scene_dir = Path(args.scene)
-    model_dir = find_model_dir(scene_dir, Path(args.model_dir) if args.model_dir else None)
-    output_dir = Path(args.output_dir) if args.output_dir else model_dir
+    cli = tyro.cli(CLI)
+    scene_dir = Path(cli.scene)
+    model_dir = find_model_dir(scene_dir, Path(cli.model_dir) if cli.model_dir else None)
+    output_dir = Path(cli.output_dir) if cli.output_dir else model_dir
 
     cameras_bin = model_dir / "cameras.bin"
     images_bin = model_dir / "images.bin"
