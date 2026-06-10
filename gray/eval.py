@@ -8,21 +8,21 @@ from gray.utils import masked_psnr, masked_ssim
 
 EvalMode = Literal["pinhole", "fisheye"]
 
-EVAL_MODE_PRESETS: Dict[EvalMode, Tuple[str, str]] = {
+EVAL_MODEL_PRESETS: Dict[EvalMode, Tuple[str, str]] = {
     "pinhole": ("sparse/0", "images_{downsampling}"),
-    "fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
 }
 
 
 def format_eval_images_dir(cfg: Config, mode: EvalMode) -> str:
-    return EVAL_MODE_PRESETS[mode][1].format(
+    return EVAL_MODEL_PRESETS[mode][1].format(
         downsampling=cfg.downsampling,
         source_path=cfg.source_path,
     )
 
 
 def mode_sparse_subdir(mode: EvalMode) -> str:
-    return EVAL_MODE_PRESETS[mode][0]
+    return EVAL_MODEL_PRESETS[mode][0]
 
 
 def load_eval_views(cfg: Config, mode: EvalMode, *, load_images=True) -> ColmapViews:

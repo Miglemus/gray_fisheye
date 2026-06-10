@@ -4,7 +4,7 @@ from gray.eval import load_eval_views, scene_to_views
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from run_colmap_fixed import CameraConfig, load_config
+from run_colmap_fixed import CameraConfig, load_config, CAMERA_PARAM_KEYS
 import os
 
 
@@ -14,10 +14,10 @@ class RenderCLI:
 
     iteration: Annotated[int, arg(aliases=["-t"])] = -1
     splits: List[Literal["train", "test"]] = field(default_factory=lambda: ["test"])
-    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["pinhole"])
+    eval_models: List[Literal["pinhole", "opencv_fisheye"]] = field(default_factory=lambda: ["pinhole"])
 
     # * Optional changes to this image size
-    intrinsics: Annotated[Optional[os.PathLike], arg(help="JSON file with camera parameters; defaults to source_path parameters")] = None
+    intrinsics: Annotated[Optional[os.PathLike], arg(help="JSON file with camera intrinsics (and model name, e.g. 'opencv_fisheye'); defaults to source_path parameters")] = None
     width: Optional[int] = None
     height: Optional[int] = None
     fov_y: Optional[float] = None
@@ -49,14 +49,14 @@ else:
     iteration = search_for_max_iteration(cli.model_path)
     save_path = os.path.join(cli.model_path, f"gaussians_{iteration:05d}.safetensors")
 
-eval_modes = cli.eval_modes or cfg.resolved_eval_modes()
+eval_modes = cli.eval_models or cfg.resolved_eval_modes()
 
 
 def load_render_views(mode, *, load_images=True):
     try:
         return load_eval_views(cfg, mode, load_images=load_images)
     except FileNotFoundError:
-        if cli.eval_modes:
+        if cli.eval_models:
             raise
         print(
             f"Colmap dataset not found at '{cfg.source_path}'; "
@@ -87,10 +87,10 @@ raytracer = Raytracer.from_safetensors(
 # * Render images
 print("Rendering iteration", iteration)
 executor = ThreadPoolExecutor()
-for mode in eval_modes:
-    views = load_render_views(mode)
+for camera_model in eval_modes:
+    views = load_render_views(camera_model)
     for split in cli.splits:
-        dir_name = os.path.join(cli.model_path, split, f"{iteration:05d}", mode)
+        dir_name = os.path.join(cli.model_path, split, f"{iteration:05d}", camera_model)
         os.makedirs(os.path.join(dir_name, "renders"), exist_ok=True)
         os.makedirs(os.path.join(dir_name, "gt"), exist_ok=True)
 
@@ -107,6 +107,13 @@ for mode in eval_modes:
                 f"Expected {len(cameras)} znear values for split '{split}', got {len(cli.znear_list)}"
             )
 
+        cam_intrinsics = None
+        if camera_config is not None and camera_model.lower() == camera_config.model.lower():
+            for i, param in enumerate(CAMERA_PARAM_KEYS[camera_config.model]):
+                if param in ["fx", "fy", "cx", "cy"]:
+                    camera_config.params[i] /= int(cfg.downsampling)
+            cam_intrinsics = np.array(camera_config.params)
+
         futures = []
 
         for i, cam in enumerate(cameras):
@@ -120,8 +127,9 @@ for mode in eval_modes:
                     cli.width or cam.image_width,
                     cli.height or cam.image_height,
                 )
-                if camera_config is not None:
-                    cam.intrinsics = np.array(camera_config.params)
+                
+                if cam_intrinsics is not None:
+                    cam.intrinsics = cam_intrinsics
                 render = raytracer(cam, znear=znear).clamp(0, 1)
 
             futures.append(
@@ -133,7 +141,7 @@ for mode in eval_modes:
                     executor.submit(save_image, gt, os.path.join(dir_name, "gt", f"{i:05d}.png"))
                 )
 
-        for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Saving {mode} {split} images"):
+        for _ in tqdm(as_completed(futures), total=len(futures), desc=f"Saving {camera_model} {split} images"):
             pass
     del views
     torch.cuda.empty_cache()
