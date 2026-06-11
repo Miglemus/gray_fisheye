@@ -53,7 +53,7 @@ if scene.test_cameras:
     if cfg.preview_test_image_name:
         test_cam0 = {cam.image_name: cam for cam in scene.test_cameras}[cfg.preview_test_image_name]
 eval_modes = cfg.resolved_eval_modes()
-training_eval_mode = "fisheye" if cfg.fisheye else "pinhole"
+training_eval_mode = cfg.camera_model
 eval_views = {}
 for mode in eval_modes:
     if mode == training_eval_mode:

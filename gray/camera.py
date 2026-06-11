@@ -19,8 +19,8 @@ class CameraInfo:
     image_width: int
     image_height: int
     is_test: bool
-    model: str = "pinhole"  # * "pinhole" or "opencv_fisheye"
-    intrinsics: np.ndarray = None  # * fx, fy, cx, cy, k1, k2, k3, k4 scaled to image resolution (fisheye only)
+    model: str = "pinhole"  # * "pinhole" or "opencv_fisheye" or "thin_prism_fisheye"
+    intrinsics: np.ndarray = None  # * fisheye intrinsics scaled to image resolution (8 or 12 floats)
 
     @staticmethod
     def from_colmap(cfg, key, extr, intr, is_test: bool):
@@ -52,9 +52,16 @@ class CameraInfo:
             fov_y = focal2fov(fy, height)
             fov_x = focal2fov(fx, width)
             intrinsics = np.array([fx, fy, cx, cy, k1, k2, k3, k4], dtype=np.float64)
+        elif intr.model == "THIN_PRISM_FISHEYE":
+            model = "thin_prism_fisheye"
+            fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1 = intr.params
+            fov_y = focal2fov(fy, height)
+            fov_x = focal2fov(fx, width)
+            intrinsics = np.array([fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1], dtype=np.float64)
         else:
             assert False, (
-                "Colmap camera model not handled: only PINHOLE, SIMPLE_PINHOLE and OPENCV_FISHEYE supported!"
+                "Colmap camera model not handled: only PINHOLE, SIMPLE_PINHOLE, "
+                "OPENCV_FISHEYE and THIN_PRISM_FISHEYE supported!"
             )
 
         if os.path.isabs(extr.name):
@@ -142,7 +149,7 @@ class CameraInfo:
         return tensor
 
     def intrinsics_cuda(self):
-        """Returns the fisheye intrinsics (fx, fy, cx, cy, k1..k4) cached as a CUDA tensor"""
+        """Returns the fisheye intrinsics cached as a CUDA tensor"""
         import torch
 
         tensor = getattr(self, "_intrinsics_cuda", None)

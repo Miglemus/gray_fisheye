@@ -191,7 +191,7 @@ class SceneInfo:
             cfg,
             sparse_subdir=cfg.colmap_sparse_subdir,
             images_dir=cfg.images_dir,
-            apply_fisheye_mask=cfg.fisheye,
+            apply_fisheye_mask=cfg.camera_model in ["opencv_fisheye", "thin_prism_fisheye"],
             llffhold=llffhold,
             build_halfres=True,
         )

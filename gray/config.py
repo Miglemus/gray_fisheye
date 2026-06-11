@@ -16,11 +16,11 @@ class DatasetConfig:
     
     eval: bool = True  
 
-    fisheye: Annotated[bool, arg(aliases=["-f"])] = False  # * Train on raw fisheye images with OPENCV_FISHEYE rays
-    colmap_sparse_subdir: str = "sparse/0"  # * Overridden to the distorted reconstruction when fisheye=True
-    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["pinhole"])
+    colmap_sparse_subdir: str = "sparse/0"  # * Overridden for fisheye camera models
+    eval_modes: List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]] = field(default_factory=lambda: ["pinhole"])
 
-    # * Fisheye vignette masking (only applied when fisheye=True); ignores invalid pixels in loss and metrics
+    camera_model: Annotated[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"], arg(aliases=["-c"])] = "pinhole"
+    # * Fisheye vignette masking (only applied for fisheye camera models)
     fisheye_mask_geometric: bool = True  # * Mask pixels outside the lens disk (radial mask)
     # * Aggressivity of the radial mask: 1.0 == exact 90 deg disk (baseline); values < 1 shrink the
     # * valid radius to also cover the vignetted rim. Masked surface grows ~ (1 - radius_scale**2).
@@ -28,7 +28,7 @@ class DatasetConfig:
 
     def __post_init__(self):
         # * Fisheye uses the distorted COLMAP reconstruction and the raw (resized) images
-        if self.fisheye:
+        if self.camera_model in ["opencv_fisheye", "thin_prism_fisheye"]:
             self.colmap_sparse_subdir = "distorted/sparse/0"
             if self.images_dir == "images_{downsampling}":
                 self.images_dir = "input_{downsampling}"
@@ -172,7 +172,7 @@ class Config(RaytracerConfig, DatasetConfig):
         DatasetConfig.__post_init__(self)
         RaytracerConfig.__post_init__(self)
 
-    def resolved_eval_modes(self) -> List[Literal["pinhole", "fisheye"]]:
+    def resolved_eval_modes(self) -> List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]]:
         if self.eval_modes:
             return self.eval_modes
-        return ["fisheye"] if self.fisheye else ["pinhole"]
+        return [self.camera_model]

@@ -70,7 +70,25 @@ __device__ __forceinline__ float3 thin_prism_fisheye_unproject(const float *para
         }
     }
 
-    // Optimisation CUDA : calcul de l'inverse de la norme à l'aide de rsqrtf (très rapide sur hardware)
+    // * FOV cutoff at 90 deg (matches opencv_fisheye.cuh and fisheye_mask.py)
+    constexpr float FISHEYE_MAX_THETA = 1.5707963f;
+    float r_final = sqrtf(u_final * u_final + v_final * v_final);
+    float theta_final = atanf(r_final);
+    float t2 = FISHEYE_MAX_THETA * FISHEYE_MAX_THETA;
+    float t4 = t2 * t2;
+    float t6 = t4 * t2;
+    float t8 = t4 * t4;
+    float theta_d_max = FISHEYE_MAX_THETA * (1.0f + k1 * t2 + k2 * t4 + k3 * t6 + k4 * t8);
+    float theta2_f = theta_final * theta_final;
+    float theta4_f = theta2_f * theta2_f;
+    float theta6_f = theta4_f * theta2_f;
+    float theta8_f = theta4_f * theta4_f;
+    float theta_d_final =
+        theta_final * (1.0f + k1 * theta2_f + k2 * theta4_f + k3 * theta6_f + k4 * theta8_f);
+    if (theta_final >= FISHEYE_MAX_THETA || theta_d_final >= theta_d_max) {
+        return make_float3(0.0f, 0.0f, 0.0f);
+    }
+
     float inv_norm = rsqrtf(u_final * u_final + v_final * v_final + 1.0f);
     return make_float3(u_final * inv_norm, v_final * inv_norm, 1.0f * inv_norm);
 }

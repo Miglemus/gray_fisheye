@@ -6,11 +6,12 @@ from gray.scene import ColmapViews, SceneInfo, load_colmap_views
 from gray.utils import masked_psnr, masked_ssim
 
 
-EvalMode = Literal["pinhole", "fisheye"]
+EvalMode = Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]
 
 EVAL_MODEL_PRESETS: Dict[EvalMode, Tuple[str, str]] = {
     "pinhole": ("sparse/0", "images_{downsampling}"),
     "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
 }
 
 
@@ -30,7 +31,7 @@ def load_eval_views(cfg: Config, mode: EvalMode, *, load_images=True) -> ColmapV
         cfg,
         sparse_subdir=mode_sparse_subdir(mode),
         images_dir=format_eval_images_dir(cfg, mode),
-        apply_fisheye_mask=mode == "fisheye",
+        apply_fisheye_mask=mode in ["opencv_fisheye", "thin_prism_fisheye"],
         load_images=load_images,
     )
 

@@ -21,7 +21,7 @@ struct Camera {
     const float *zfar;
 
     const int *model_id;          // * CAMERA_MODEL_* selector
-    const float *fisheye_params;  // * fx, fy, cx, cy, k1, k2, k3, k4 (already scaled to render resolution)
+    const float *fisheye_params;  // * up to 12 floats: fx, fy, cx, cy, k1..k4 [, p1, p2, sx1, sy1]
 
 #ifdef __CUDACC__
     __device__ float3 compute_primary_ray_direction(const bool jitter, const uint3 idx, const uint3 dim,
@@ -44,7 +44,15 @@ struct Camera {
             return normalize(rotation_w2c[0] * cam_dir.x + rotation_w2c[1] * cam_dir.y +
                              rotation_w2c[2] * cam_dir.z);
         } else if (*model_id == CAMERA_MODEL_THIN_PRISM_FISHEYE) {
-            // * TODO
+            // * Unproject pixel to a unit bearing in the Thin Prism Fisheye camera frame (x right, y down, z fwd)
+            float3 tpf = thin_prism_fisheye_unproject(fisheye_params, idxf.x + 0.5f, idxf.y + 0.5f);
+            if (tpf.x == 0.0f && tpf.y == 0.0f && tpf.z == 0.0f) {
+                return make_float3(0.0f, 0.0f, 0.0f); // * Inactive pixel (outside the Thin Prism Fisheye FOV)
+            }
+            // * Convert to GRay's camera frame (x right, y up, z back) then rotate to world
+            float3 cam_dir = make_float3(tpf.x, -tpf.y, -tpf.z);
+            return normalize(rotation_w2c[0] * cam_dir.x + rotation_w2c[1] * cam_dir.y +
+                             rotation_w2c[2] * cam_dir.z);
         }
 
         // * Pinhole: NDC image-plane coordinates (x right, y up, forward = -z)
@@ -71,7 +79,7 @@ struct CameraDataHolder : torch::CustomClassHolder {
     Tensor zfar = torch::zeros({1}, CUDA_FLOAT32);
 
     Tensor model_id = torch::zeros({1}, CUDA_INT32);        // * defaults to CAMERA_MODEL_PINHOLE
-    Tensor fisheye_params = torch::zeros({8}, CUDA_FLOAT32); // * fx, fy, cx, cy, k1, k2, k3, k4
+    Tensor fisheye_params = torch::zeros({12}, CUDA_FLOAT32); // * fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1
 
     Camera reify() {
         return Camera{
@@ -94,12 +102,18 @@ struct CameraDataHolder : torch::CustomClassHolder {
         rotation_w2c.copy_(c2w_rotation.transpose(0, 1));
     }
 
-    void set_pinhole() { model_id.fill_(0); }
+    void set_pinhole() { model_id.fill_(CAMERA_MODEL_PINHOLE); }
 
     void set_opencv_fisheye(const Tensor &params) {
         TORCH_CHECK(params.numel() == 8, "fisheye params must have 8 elements (fx, fy, cx, cy, k1..k4)");
-        model_id.fill_(1);
+        model_id.fill_(CAMERA_MODEL_OPENCV_FISHEYE);
         fisheye_params.copy_(params.reshape({8}));
+    }
+
+    void set_thin_prism_fisheye(const Tensor &params) {
+        TORCH_CHECK(params.numel() == 12, "thin prism fisheye params must have 12 elements (fx, fy, cx, cy, k1..k4, p1, p2, sx1, sy1)");
+        model_id.fill_(CAMERA_MODEL_THIN_PRISM_FISHEYE);
+        fisheye_params.copy_(params.reshape({12}));
     }
 
     static void bind(torch::Library &m) {
@@ -107,6 +121,7 @@ struct CameraDataHolder : torch::CustomClassHolder {
             .def("set_pose", &CameraDataHolder::set_pose)
             .def("set_pinhole", &CameraDataHolder::set_pinhole)
             .def("set_opencv_fisheye", &CameraDataHolder::set_opencv_fisheye)
+            .def("set_thin_prism_fisheye", &CameraDataHolder::set_thin_prism_fisheye)
             .def_readonly("vertical_fov_radians", &CameraDataHolder::vertical_fov_radians)
             .def_readonly("znear", &CameraDataHolder::znear)
             .def_readonly("zfar", &CameraDataHolder::zfar);

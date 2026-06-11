@@ -10,16 +10,28 @@ def test_resolved_eval_modes_defaults_and_override(tmp_path):
     pinhole_cfg = Config(source_path="data/scene", model_path=str(tmp_path / "pinhole"))
     assert pinhole_cfg.resolved_eval_modes() == ["pinhole"]
 
-    fisheye_cfg = Config(source_path="data/scene", model_path=str(tmp_path / "fisheye"), fisheye=True)
-    assert fisheye_cfg.resolved_eval_modes() == ["fisheye"]
+    fisheye_cfg = Config(
+        source_path="data/scene",
+        model_path=str(tmp_path / "fisheye"),
+        camera_model="opencv_fisheye",
+    )
+    assert fisheye_cfg.resolved_eval_modes() == ["opencv_fisheye"]
     assert fisheye_cfg.images_dir == "input_4"
+
+    tpf_cfg = Config(
+        source_path="data/scene",
+        model_path=str(tmp_path / "tpf"),
+        camera_model="thin_prism_fisheye",
+    )
+    assert tpf_cfg.resolved_eval_modes() == ["thin_prism_fisheye"]
+    assert tpf_cfg.images_dir == "input_4"
 
     dual_cfg = Config(
         source_path="data/scene",
         model_path=str(tmp_path / "dual"),
-        eval_modes=["pinhole", "fisheye"],
+        eval_modes=["pinhole", "opencv_fisheye"],
     )
-    assert dual_cfg.resolved_eval_modes() == ["pinhole", "fisheye"]
+    assert dual_cfg.resolved_eval_modes() == ["pinhole", "opencv_fisheye"]
 
 
 def test_load_eval_views_selects_expected_camera_models_and_masks(tmp_path):
@@ -41,7 +53,7 @@ def test_load_eval_views_selects_expected_camera_models_and_masks(tmp_path):
     assert pinhole_views.train_cameras[0].model == "pinhole"
     assert "/images_4/" in pinhole_views.train_cameras[0].image_path
 
-    fisheye_views = load_eval_views(cfg, "fisheye", load_images=False)
+    fisheye_views = load_eval_views(cfg, "opencv_fisheye", load_images=False)
     assert fisheye_views.train_cameras
     assert fisheye_views.test_cameras
     assert fisheye_views.valid_mask is not None

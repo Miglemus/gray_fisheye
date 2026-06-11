@@ -1,6 +1,6 @@
 import numpy as np
 
-from gray.fisheye_mask import geometric_valid_mask
+from gray.fisheye_mask import geometric_valid_mask_opencv_fisheye
 
 
 # * transmission_fe intrinsics scaled to downsample 4 (1296 x 864)
@@ -21,7 +21,7 @@ INTRINSICS = np.array(
 
 
 def test_geometric_mask_center_valid_corners_invalid():
-    mask = geometric_valid_mask(INTRINSICS, H, W, device="cpu")
+    mask = geometric_valid_mask_opencv_fisheye(INTRINSICS, H, W, device="cpu")
     assert mask.shape == (H, W)
 
     # * Image center is well within the lens disk
@@ -35,9 +35,9 @@ def test_geometric_mask_center_valid_corners_invalid():
 
 
 def test_radius_scale_shrinks_valid_region():
-    baseline = geometric_valid_mask(INTRINSICS, H, W, device="cpu", radius_scale=1.0)
-    aggressive = geometric_valid_mask(INTRINSICS, H, W, device="cpu", radius_scale=0.9)
-    larger = geometric_valid_mask(INTRINSICS, H, W, device="cpu", radius_scale=1.1)
+    baseline = geometric_valid_mask_opencv_fisheye(INTRINSICS, H, W, device="cpu", radius_scale=1.0)
+    aggressive = geometric_valid_mask_opencv_fisheye(INTRINSICS, H, W, device="cpu", radius_scale=0.9)
+    larger = geometric_valid_mask_opencv_fisheye(INTRINSICS, H, W, device="cpu", radius_scale=1.1)
 
     # * Smaller radius_scale masks more pixels; larger keeps more
     assert aggressive.sum() < baseline.sum()
