@@ -1,9 +1,9 @@
 import logging
 import shutil
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, List, Literal
 
 import pycolmap
 import tyro
@@ -17,7 +17,7 @@ from gray.colmap import best_reconstruction_model
 @dataclass
 class CLI:
     source_path: Annotated[str, arg(aliases=["-s"])]
-    camera: str = "OPENCV"
+    camera: Literal["OPENCV", "OPENCV_FISHEYE", "THIN_PRISM_FISHEYE"] = "OPENCV"
     gpu: bool = True
     delete_input: bool = False
 

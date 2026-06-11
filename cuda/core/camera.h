@@ -3,12 +3,14 @@
 #ifdef __CUDACC__
 #include "../utils/random.h"
 #include "../utils/vec_math.h"
-#include "fisheye.cuh"
+#include "opencv_fisheye.cuh"
+#include "tpf.cuh"
 #endif
 
 // * Primary-ray camera models
 #define CAMERA_MODEL_PINHOLE 0
 #define CAMERA_MODEL_OPENCV_FISHEYE 1
+#define CAMERA_MODEL_THIN_PRISM_FISHEYE 2
 
 struct Camera {
     const float3 *origin;
@@ -33,7 +35,7 @@ struct Camera {
 
         if (*model_id == CAMERA_MODEL_OPENCV_FISHEYE) {
             // * Unproject pixel to a unit bearing in the OpenCV camera frame (x right, y down, z fwd)
-            float3 ocv = fisheye_unproject(fisheye_params, idxf.x + 0.5f, idxf.y + 0.5f);
+            float3 ocv = opencv_fisheye_unproject(fisheye_params, idxf.x + 0.5f, idxf.y + 0.5f);
             if (ocv.x == 0.0f && ocv.y == 0.0f && ocv.z == 0.0f) {
                 return make_float3(0.0f, 0.0f, 0.0f); // * Inactive pixel (outside the fisheye FOV)
             }
@@ -41,6 +43,8 @@ struct Camera {
             float3 cam_dir = make_float3(ocv.x, -ocv.y, -ocv.z);
             return normalize(rotation_w2c[0] * cam_dir.x + rotation_w2c[1] * cam_dir.y +
                              rotation_w2c[2] * cam_dir.z);
+        } else if (*model_id == CAMERA_MODEL_THIN_PRISM_FISHEYE) {
+            // * TODO
         }
 
         // * Pinhole: NDC image-plane coordinates (x right, y up, forward = -z)
