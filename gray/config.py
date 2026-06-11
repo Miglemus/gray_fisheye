@@ -16,9 +16,9 @@ class DatasetConfig:
     
     eval: bool = True  
 
-    fisheye: Annotated[bool, arg(aliases=["-f"])] = False  # * Train on raw fisheye images with OPENCV_FISHEYE rays
+    fisheye: Annotated[bool, arg(aliases=["-f"])] = True  # * Train on raw fisheye images with OPENCV_FISHEYE rays
     colmap_sparse_subdir: str = "sparse/0"  # * Overridden to the distorted reconstruction when fisheye=True
-    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["pinhole"])
+    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["fisheye"])
 
     # * Fisheye vignette masking (only applied when fisheye=True); ignores invalid pixels in loss and metrics
     fisheye_mask_geometric: bool = True  # * Mask pixels outside the lens disk (radial mask)
