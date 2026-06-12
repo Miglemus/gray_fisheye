@@ -235,6 +235,23 @@ while iteration < cfg.iterations + 1:
                 flush=True,
             )
 
+            # * Log the global vignetting parameters
+            if cfg.vignetting_comp:
+                vignetting_csv_path = os.path.join(cfg.model_path, f"vignetting_{iteration:05d}.csv")
+                with open(vignetting_csv_path, "w") as vignetting_log:
+                    column_names = []
+                    if cfg.vignetting_include_linear_term:
+                        column_names.append("coeff_r1")
+                    column_names.extend(
+                        f"coeff_r{2 * (term_idx + 1)}" for term_idx in range(cfg.vignetting_terms)
+                    )
+                    print(",".join(column_names + ["cx", "cy"]), file=vignetting_log)
+                    coefficients = raytracer.vignetting.coefficients.detach().cpu()
+                    principal_point = raytracer.vignetting.principal_point.detach().cpu()
+                    values = [str(value.item()) for value in coefficients]
+                    values += [str(principal_point[0].item()), str(principal_point[1].item())]
+                    print(",".join(values), file=vignetting_log)
+
         # * Acquire viewer lock
         if cfg.viewer:
             viewer.gaussian_lock.acquire()
