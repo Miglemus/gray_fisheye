@@ -141,10 +141,11 @@ for camera_model in eval_modes:
         cam_intrinsics = None
         if camera_config is not None and gray_models_equal(camera_model, camera_config.model):
             param_key = normalize_gray_model(camera_config.model)
+            params = list(camera_config.params)
             for i, param in enumerate(CAMERA_PARAM_KEYS[param_key]):
                 if param in ["fx", "fy", "cx", "cy"]:
-                    camera_config.params[i] /= int(cfg.downsampling)
-            cam_intrinsics = np.array(camera_config.params)
+                    params[i] /= int(cfg.downsampling)
+            cam_intrinsics = np.array(params, dtype=np.float64)
 
         futures = []
 

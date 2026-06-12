@@ -152,11 +152,15 @@ class CameraInfo:
         return tensor
 
     def intrinsics_cuda(self):
-        """Returns the fisheye intrinsics cached as a CUDA tensor"""
+        """Returns the fisheye intrinsics as a CUDA tensor, synced with ``self.intrinsics``."""
         import torch
 
+        intrinsics = np.asarray(self.intrinsics, dtype=np.float32)
+        cached_id = getattr(self, "_intrinsics_cache_id", None)
         tensor = getattr(self, "_intrinsics_cuda", None)
-        if tensor is None:
-            tensor = torch.from_numpy(np.asarray(self.intrinsics, dtype=np.float32)).cuda()
-            self._intrinsics_cuda = tensor
+        if cached_id is id(self.intrinsics) and tensor is not None and tensor.numel() == intrinsics.size:
+            return tensor
+        tensor = torch.from_numpy(intrinsics).cuda()
+        self._intrinsics_cuda = tensor
+        self._intrinsics_cache_id = id(self.intrinsics)
         return tensor

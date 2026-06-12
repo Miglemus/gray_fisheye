@@ -107,7 +107,7 @@ struct CameraDataHolder : torch::CustomClassHolder {
     void set_opencv_fisheye(const Tensor &params) {
         TORCH_CHECK(params.numel() == 8, "fisheye params must have 8 elements (fx, fy, cx, cy, k1..k4)");
         model_id.fill_(CAMERA_MODEL_OPENCV_FISHEYE);
-        fisheye_params.copy_(params.reshape({8}));
+        fisheye_params.slice(0, 0, 8).copy_(params.reshape({8}));
     }
 
     void set_thin_prism_fisheye(const Tensor &params) {

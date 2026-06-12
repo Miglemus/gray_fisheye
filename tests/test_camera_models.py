@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from gray.camera_models import (
@@ -78,3 +79,28 @@ def test_config_normalizes_camera_model_case(tmp_path):
 
 def test_gray_models_equal_is_case_insensitive():
     assert gray_models_equal("OPENCV_FISHEYE", "opencv_fisheye")
+
+
+def test_intrinsics_cuda_refreshes_after_override():
+    from gray.camera import CameraInfo
+
+    cam = CameraInfo(
+        uid=0,
+        R=np.eye(3),
+        T=np.zeros(3),
+        origin=np.zeros(3),
+        fov_y=1.0,
+        fov_x=1.0,
+        image_path="",
+        image_name="test",
+        image_width=100,
+        image_height=100,
+        is_test=False,
+        model="thin_prism_fisheye",
+        intrinsics=np.ones(12, dtype=np.float64),
+    )
+    assert cam.intrinsics_cuda().numel() == 12
+
+    cam.intrinsics = np.ones(8, dtype=np.float64)
+    cam.model = "opencv_fisheye"
+    assert cam.intrinsics_cuda().numel() == 8
