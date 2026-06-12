@@ -84,6 +84,7 @@ class RaytracerConfig:
 
     # * Optimization
     iterations: Annotated[int, arg(aliases=["-t"])]  = 15_000
+    batch_size: int = 1  # * Cameras per optimization step (gradient accumulation)
     lr_mean_init: float = 0.00016
     lr_mean_final: float = 0.0000016
     lr_channels: float = 0.0025  # * Only used when SH are disabled
@@ -153,6 +154,7 @@ class RaytracerConfig:
             self.preview_iters.append(self.iterations)
 
         # * Enforce valid configurations
+        assert self.batch_size >= 1
         assert self.sh_init_degree <= self.sh_max_degree
         assert 0 <= self.sh_max_degree <= 3
         if self.sh:

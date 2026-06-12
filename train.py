@@ -267,10 +267,13 @@ while iteration < cfg.iterations + 1:
             raytracer.set_render_resolution(cam0.image_width, cam0.image_height)
             images = scene.train_images
             mask = scene.valid_mask
-            batch_size = 1
+            batch_size = cfg.batch_size
 
         # *** Forward pass
         batch = [camera_pool.pop() for _ in range(min(batch_size, len(camera_pool)))]
+        batch_size = len(batch)
+        batch_training_l1 = 0.0
+        batch_training_psnr = 0.0
         for camera in batch:
             render_unclamped = raytracer(camera)
             render = render_unclamped.clamp(0, 1)
@@ -295,6 +298,14 @@ while iteration < cfg.iterations + 1:
 
             # *** Backward pass and optimization step
             raytracer.backward(loss / batch_size)
+
+            # * Accumulate batch-averaged training metrics
+            if mask is not None:
+                batch_training_l1 += masked_l1(render, target, mask).item() / batch_size
+                batch_training_psnr += masked_psnr(render, target, mask).item() / batch_size
+            else:
+                batch_training_l1 += F.l1_loss(render, target).item() / batch_size
+                batch_training_psnr += psnr(render[None], target[None]).item() / batch_size
         raytracer.step()
 
         # * Scale decay
@@ -321,14 +332,8 @@ while iteration < cfg.iterations + 1:
             raytracer.cuda_module.rebuild_bvh()
 
         # * Log training curve
-        if mask is not None:
-            training_l1 = masked_l1(render, target, mask).item()
-            training_psnr = masked_psnr(render, target, mask).item()
-        else:
-            training_l1 = F.l1_loss(render, target).item()
-            training_psnr = psnr(render[None], target[None]).item()
-        l1_avg += training_l1 / cfg.log_loss_interval
-        psnr_avg += training_psnr / cfg.log_loss_interval
+        l1_avg += batch_training_l1 / cfg.log_loss_interval
+        psnr_avg += batch_training_psnr / cfg.log_loss_interval
         if iteration % cfg.log_loss_interval == 0 or iteration == 1:
             print(
                 f"{iteration:05d} {l1_avg:.8f} {psnr_avg:.8f}",
