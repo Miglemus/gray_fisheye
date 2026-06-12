@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from gray.config import Config
-from gray.eval import load_eval_views
+from gray.eval import (
+    load_eval_views,
+    source_mode_for_eval,
+    validate_eval_modes,
+)
 
 
 def test_resolved_eval_modes_defaults_and_override(tmp_path):
@@ -29,9 +33,56 @@ def test_resolved_eval_modes_defaults_and_override(tmp_path):
     dual_cfg = Config(
         source_path="data/scene",
         model_path=str(tmp_path / "dual"),
+        camera_model="opencv_fisheye",
         eval_modes=["pinhole", "opencv_fisheye"],
     )
     assert dual_cfg.resolved_eval_modes() == ["pinhole", "opencv_fisheye"]
+
+
+def test_validate_eval_modes_allows_pinhole_and_colmap_model():
+    validate_eval_modes(["pinhole", "thin_prism_fisheye"], "thin_prism_fisheye")
+    validate_eval_modes(["pinhole"], "opencv_fisheye")
+
+
+def test_validate_eval_modes_rejects_unknown_model_without_intrinsics():
+    with pytest.raises(ValueError, match="opencv_fisheye"):
+        validate_eval_modes(["opencv_fisheye"], "thin_prism_fisheye")
+
+
+def test_validate_eval_modes_allows_custom_model_with_intrinsics():
+    validate_eval_modes(
+        ["opencv_fisheye"],
+        "thin_prism_fisheye",
+        intrinsics_model="opencv_fisheye",
+    )
+
+
+def test_source_mode_for_eval_custom_intrinsics_uses_colmap_model():
+    assert (
+        source_mode_for_eval(
+            "opencv_fisheye",
+            "thin_prism_fisheye",
+            intrinsics_model="opencv_fisheye",
+        )
+        == "thin_prism_fisheye"
+    )
+
+
+def test_load_eval_views_rejects_mismatched_sparse_model(tmp_path):
+    project_dir = Path(__file__).resolve().parents[1]
+    scene_path = project_dir.parents[1] / "data" / "myscenes" / "transmission_fe"
+    if not (scene_path / "distorted" / "sparse" / "0").exists():
+        pytest.skip("transmission_fe fisheye fixture data is not available")
+
+    cfg = Config(
+        source_path=str(scene_path),
+        model_path=str(tmp_path / "model"),
+        downsampling=4,
+        camera_model="thin_prism_fisheye",
+    )
+
+    with pytest.raises(ValueError, match="opencv_fisheye"):
+        load_eval_views(cfg, "opencv_fisheye", load_images=False)
 
 
 def test_load_eval_views_selects_expected_camera_models_and_masks(tmp_path):

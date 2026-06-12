@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from tyro.conf import arg
-from typing import Annotated, List, Optional, Literal
+from typing import Annotated, List, Optional
+
+from gray.camera_models import GrayCameraModel, is_fisheye_gray_model, normalize_gray_model
 
 
 @dataclass
@@ -16,9 +18,9 @@ class DatasetConfig:
     eval: bool = True  
 
     colmap_sparse_subdir: str = "sparse/0"  # * Overridden for fisheye camera models
-    eval_modes: List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]] = field(default_factory=lambda: ["pinhole"])
+    eval_modes: List[GrayCameraModel] = field(default_factory=list)
 
-    camera_model: Annotated[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"], arg(aliases=["-c"])] = "pinhole"
+    camera_model: Annotated[GrayCameraModel, arg(aliases=["-c"])] = "pinhole"
     # * Fisheye vignette masking (only applied for fisheye camera models)
     fisheye_mask_geometric: bool = True  # * Mask pixels outside the lens disk (radial mask)
     # * Aggressivity of the radial mask: 1.0 == exact 90 deg disk (baseline); values < 1 shrink the
@@ -26,8 +28,10 @@ class DatasetConfig:
     fisheye_mask_radius_scale: float = 0.95
 
     def __post_init__(self):
+        self.camera_model = normalize_gray_model(self.camera_model)
+        self.eval_modes = [normalize_gray_model(mode) for mode in self.eval_modes]
         # * Fisheye uses the distorted COLMAP reconstruction and the raw (resized) images
-        if self.camera_model in ["opencv_fisheye", "thin_prism_fisheye"]:
+        if is_fisheye_gray_model(self.camera_model):
             self.colmap_sparse_subdir = "distorted/sparse/0"
             if self.images_dir == "images_{downsampling}":
                 self.images_dir = "input_{downsampling}"
@@ -171,7 +175,7 @@ class Config(RaytracerConfig, DatasetConfig):
         DatasetConfig.__post_init__(self)
         RaytracerConfig.__post_init__(self)
 
-    def resolved_eval_modes(self) -> List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]]:
+    def resolved_eval_modes(self) -> List[GrayCameraModel]:
         if self.eval_modes:
             return self.eval_modes
         return [self.camera_model]

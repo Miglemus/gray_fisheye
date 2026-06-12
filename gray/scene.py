@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from gray.imports import *
 from gray.utils import *
+from gray.camera_models import gray_models_equal, is_fisheye_gray_model, normalize_gray_model
 from gray.config import Config
 from gray.camera import CameraInfo
 import gray.colmap as colmap
@@ -61,6 +62,7 @@ def load_colmap_views(
     llffhold=8,
     load_images=True,
     build_halfres=False,
+    expected_camera_model: Optional[str] = None,
 ) -> ColmapViews:
     path = cfg.source_path
     sparse_dir = os.path.join(path, sparse_subdir)
@@ -96,6 +98,14 @@ def load_colmap_views(
         )
         cam_infos_unsorted.append(cam_info)
     cam_infos = sorted(cam_infos_unsorted.copy(), key=lambda x: x.image_name)
+    if expected_camera_model is not None and cam_infos:
+        actual_model = normalize_gray_model(cam_infos[0].model)
+        expected_camera_model = normalize_gray_model(expected_camera_model)
+        if not gray_models_equal(actual_model, expected_camera_model):
+            raise ValueError(
+                f"Expected camera model '{expected_camera_model}' but COLMAP sparse "
+                f"reconstruction at '{sparse_dir}' uses '{actual_model}'"
+            )
     train_cam_infos = [c for c in cam_infos if not c.is_test]
     test_cam_infos = [c for c in cam_infos if c.is_test]
 
@@ -190,9 +200,10 @@ class SceneInfo:
             cfg,
             sparse_subdir=cfg.colmap_sparse_subdir,
             images_dir=cfg.images_dir,
-            apply_fisheye_mask=cfg.camera_model in ["opencv_fisheye", "thin_prism_fisheye"],
+            apply_fisheye_mask=is_fisheye_gray_model(cfg.camera_model),
             llffhold=llffhold,
             build_halfres=True,
+            expected_camera_model=cfg.camera_model,
         )
         train_cam_infos = views.train_cameras
         test_cam_infos = views.test_cameras

@@ -150,9 +150,12 @@ def build_fisheye_mask(cam, height: int, width: int, device, cfg) -> Optional[to
         )
 
     intr = intrinsics_at_resolution(cam, height, width)
-    if cam.model.lower() == "opencv_fisheye":
+    from gray.camera_models import normalize_gray_model
+
+    model = normalize_gray_model(cam.model)
+    if model == "opencv_fisheye":
         return geometric_valid_mask_opencv_fisheye(intr, height, width, device, cfg.fisheye_mask_radius_scale)
-    elif cam.model.lower() == "thin_prism_fisheye":
+    elif model == "thin_prism_fisheye":
         return geometric_valid_mask_thin_prism_fisheye(intr, height, width, device, cfg.fisheye_mask_radius_scale)
     else:
         raise ValueError(f"Unsupported camera model: {cam.model}")

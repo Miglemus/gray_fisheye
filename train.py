@@ -37,6 +37,7 @@ from gray.eval import (
     load_eval_views,
     max_framebuffer_size,
     scene_to_views,
+    validate_eval_modes,
 )
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
@@ -53,6 +54,7 @@ if scene.test_cameras:
     if cfg.preview_test_image_name:
         test_cam0 = {cam.image_name: cam for cam in scene.test_cameras}[cfg.preview_test_image_name]
 eval_modes = cfg.resolved_eval_modes()
+validate_eval_modes(eval_modes, cfg.camera_model)
 training_eval_mode = cfg.camera_model
 eval_views = {}
 for mode in eval_modes:

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import os
 import numpy as np
 
+from gray.camera_models import gray_model_from_colmap, normalize_gray_model
+
 
 @dataclass
 class CameraInfo:
@@ -34,26 +36,25 @@ class CameraInfo:
         R = np.transpose(colmap.qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
         origin = -R @ T
-        model = "pinhole"
+        model = gray_model_from_colmap(intr.model)
         intrinsics = None
-        if intr.model == "SIMPLE_PINHOLE":
-            focal_length_x = intr.params[0]
-            fov_y = focal2fov(focal_length_x, height)
-            fov_x = focal2fov(focal_length_x, width)
-        elif intr.model == "PINHOLE":
-            focal_length_x = intr.params[0]
-            focal_length_y = intr.params[1]
-            fov_y = focal2fov(focal_length_y, height)
-            fov_x = focal2fov(focal_length_x, width)
+        if intr.model in ["SIMPLE_PINHOLE", "PINHOLE"]:
+            if intr.model == "SIMPLE_PINHOLE":
+                focal_length_x = intr.params[0]
+                fov_y = focal2fov(focal_length_x, height)
+                fov_x = focal2fov(focal_length_x, width)
+            else:
+                focal_length_x = intr.params[0]
+                focal_length_y = intr.params[1]
+                fov_y = focal2fov(focal_length_y, height)
+                fov_x = focal2fov(focal_length_x, width)
         elif intr.model == "OPENCV_FISHEYE":
-            model = "opencv_fisheye"
             fx, fy, cx, cy, k1, k2, k3, k4 = intr.params
             # * fov_* kept only for logging / dense-init helpers, not used for fisheye rays
             fov_y = focal2fov(fy, height)
             fov_x = focal2fov(fx, width)
             intrinsics = np.array([fx, fy, cx, cy, k1, k2, k3, k4], dtype=np.float64)
         elif intr.model == "THIN_PRISM_FISHEYE":
-            model = "thin_prism_fisheye"
             fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1 = intr.params
             fov_y = focal2fov(fy, height)
             fov_x = focal2fov(fx, width)
@@ -114,6 +115,8 @@ class CameraInfo:
                 kwargs[field] = np.array(value)
             else:
                 kwargs[field] = value
+        if kwargs.get("model") is not None:
+            kwargs["model"] = normalize_gray_model(kwargs["model"])
         return CameraInfo(**kwargs)
 
     def to_json(self):

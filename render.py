@@ -1,10 +1,17 @@
 from gray.imports import *
 from gray.prelude import *
-from gray.eval import load_eval_views, scene_to_views
+from gray.eval import (
+    load_eval_views,
+    scene_to_views,
+    source_mode_for_eval,
+    uses_custom_intrinsics,
+    validate_eval_modes,
+)
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from run_colmap_fixed import load_config, CAMERA_PARAM_KEYS
+from gray.camera_models import CAMERA_PARAM_KEYS, gray_models_equal, normalize_gray_model
+from run_colmap_fixed import load_config
 import os
 
 
@@ -14,7 +21,7 @@ class RenderCLI:
 
     iteration: Annotated[int, arg(aliases=["-t"])] = -1
     splits: List[Literal["train", "test"]] = field(default_factory=lambda: ["test"])
-    eval_models: List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]] = field(default_factory=lambda: ["pinhole"])
+    eval_models: List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]] = field(default_factory=list)
 
     # * Optional changes to this image size
     intrinsics: Annotated[Optional[os.PathLike], arg(help="JSON file with camera intrinsics (and model name, e.g. 'opencv_fisheye'); defaults to source_path parameters")] = None
@@ -50,11 +57,27 @@ else:
     save_path = os.path.join(cli.model_path, f"gaussians_{iteration:05d}.safetensors")
 
 eval_modes = cli.eval_models or cfg.resolved_eval_modes()
+intrinsics_model = (
+    normalize_gray_model(camera_config.model) if camera_config is not None else None
+)
+eval_modes = [normalize_gray_model(mode) for mode in eval_modes]
+validate_eval_modes(eval_modes, cfg.camera_model, intrinsics_model=intrinsics_model)
 
 
 def load_render_views(mode, *, load_images=True):
+    source_mode = source_mode_for_eval(
+        mode,
+        cfg.camera_model,
+        intrinsics_model=intrinsics_model,
+    )
+    custom_intrinsics = uses_custom_intrinsics(mode, cfg.camera_model, intrinsics_model)
     try:
-        return load_eval_views(cfg, mode, load_images=load_images)
+        return load_eval_views(
+            cfg,
+            source_mode,
+            load_images=load_images,
+            expected_camera_model=None if custom_intrinsics else mode,
+        )
     except FileNotFoundError:
         if cli.eval_models:
             raise
@@ -62,7 +85,15 @@ def load_render_views(mode, *, load_images=True):
             f"Colmap dataset not found at '{cfg.source_path}'; "
             f"falling back to cameras saved in the model's cameras.json"
         )
-        return scene_to_views(SceneInfo.from_cameras_json(cli.model_path, parse_images=load_images))
+        views = scene_to_views(SceneInfo.from_cameras_json(cli.model_path, parse_images=load_images))
+        if not custom_intrinsics:
+            cameras = views.train_cameras or views.test_cameras
+            if cameras and not gray_models_equal(cameras[0].model, mode):
+                raise ValueError(
+                    f"Expected camera model '{mode}' but cameras.json uses "
+                    f"'{cameras[0].model}'. Provide --intrinsics with a matching model."
+                )
+        return views
 
 
 probe_views = {mode: load_render_views(mode, load_images=False) for mode in eval_modes}
@@ -108,8 +139,9 @@ for camera_model in eval_modes:
             )
 
         cam_intrinsics = None
-        if camera_config is not None and camera_model.lower() == camera_config.model.lower():
-            for i, param in enumerate(CAMERA_PARAM_KEYS[camera_config.model]):
+        if camera_config is not None and gray_models_equal(camera_model, camera_config.model):
+            param_key = normalize_gray_model(camera_config.model)
+            for i, param in enumerate(CAMERA_PARAM_KEYS[param_key]):
                 if param in ["fx", "fy", "cx", "cy"]:
                     camera_config.params[i] /= int(cfg.downsampling)
             cam_intrinsics = np.array(camera_config.params)
@@ -130,6 +162,7 @@ for camera_model in eval_modes:
                 
                 if cam_intrinsics is not None:
                     cam.intrinsics = cam_intrinsics
+                    cam.model = camera_model
                 render = raytracer(cam, znear=znear).clamp(0, 1)
 
             futures.append(
