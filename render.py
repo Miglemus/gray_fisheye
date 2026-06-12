@@ -4,7 +4,7 @@ from gray.eval import load_eval_views, scene_to_views
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from run_colmap_fixed import CameraConfig, load_config, CAMERA_PARAM_KEYS
+from run_colmap_fixed import load_config, CAMERA_PARAM_KEYS
 import os
 
 

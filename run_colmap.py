@@ -1,14 +1,11 @@
 import logging
 import shutil
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, List, Literal
+from typing import Annotated, Literal
 
 import pycolmap
 import tyro
-from PIL import Image
-from tqdm import tqdm
 from tyro.conf import arg
 
 from gray.colmap import best_reconstruction_model

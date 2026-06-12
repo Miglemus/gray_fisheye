@@ -91,7 +91,6 @@ with open(os.path.join(cfg.model_path, "preview_cameras.json"), "w") as f:
 
 # * Setup viewer
 if cfg.viewer:
-    from viewer.types import ViewerMode
     from view import GaussianViewer
 
     viewer = GaussianViewer(raytracer, scene.train_cameras, scene.test_cameras, training=True)
@@ -141,7 +140,7 @@ writer = SummaryWriter(log_dir=cfg.model_path)
 l1_avg = 0.0
 psnr_avg = 0.0
 last_psnr_avg = None
-losses_log = open(os.path.join(cfg.model_path, f"losses.csv"), "w")
+losses_log = open(os.path.join(cfg.model_path, "losses.csv"), "w")
 print("iteration l1 psnr", file=losses_log, flush=True)
 psnr_logs = {}
 ssim_logs = {}
@@ -151,17 +150,17 @@ for mode in eval_modes:
     print("iteration train test", file=psnr_logs[mode], flush=True)
     ssim_logs[mode] = open(os.path.join(cfg.model_path, f"ssim{suffix}.csv"), "w")
     print("iteration train test", file=ssim_logs[mode], flush=True)
-time_log = open(os.path.join(cfg.model_path, f"time.csv"), "w")
+time_log = open(os.path.join(cfg.model_path, "time.csv"), "w")
 print("iteration elapsed_time", file=time_log, flush=True)
-num_gaussians_log = open(os.path.join(cfg.model_path, f"num_gaussians.csv"), "w")
+num_gaussians_log = open(os.path.join(cfg.model_path, "num_gaussians.csv"), "w")
 print("iteration num_gaussians", file=num_gaussians_log, flush=True)
-traversal_stats_log = open(os.path.join(cfg.model_path, f"traversal_stats.csv"), "w")
+traversal_stats_log = open(os.path.join(cfg.model_path, "traversal_stats.csv"), "w")
 print("iteration,num_hit_per_ray,num_accum_per_ray", file=traversal_stats_log, flush=True)
-geometry_stats_log = open(os.path.join(cfg.model_path, f"geometry_stats.csv"), "w")
+geometry_stats_log = open(os.path.join(cfg.model_path, "geometry_stats.csv"), "w")
 print("iteration,opacity,scale,anisotropy", file=geometry_stats_log, flush=True)
-preview_psnr_log = open(os.path.join(cfg.model_path, f"preview_psnr.csv"), "w")
+preview_psnr_log = open(os.path.join(cfg.model_path, "preview_psnr.csv"), "w")
 print("iteration train test", file=preview_psnr_log, flush=True)
-preview_ssim_log = open(os.path.join(cfg.model_path, f"preview_ssim.csv"), "w")
+preview_ssim_log = open(os.path.join(cfg.model_path, "preview_ssim.csv"), "w")
 print("iteration train test", file=preview_ssim_log, flush=True)
 executor = ThreadPoolExecutor()
 memory_monitor = GpuMemoryMonitor().start()

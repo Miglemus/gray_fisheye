@@ -9,7 +9,6 @@ import gray.colmap as colmap
 from torchvision.io import read_image, ImageReadMode
 from concurrent.futures import ThreadPoolExecutor
 import torch
-import struct
 import json
 import copy
 

@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-import tyro
 from tyro.conf import arg
 from typing import Annotated, List, Optional, Literal
 

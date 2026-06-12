@@ -4,7 +4,7 @@ import json
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Annotated, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import tyro
 from tyro.conf import arg, Positional
 
@@ -201,7 +201,7 @@ else:
 print()
 print(cli.directory)
 print(
-    f"Scene      PSNR    SSIM  LPIPS     Time     FPS  Start#G  Final#G  InitScale        FinalScale       Skipped%"
+    "Scene      PSNR    SSIM  LPIPS     Time     FPS  Start#G  Final#G  InitScale        FinalScale       Skipped%"
 )
 print("-" * 106)
 for (
