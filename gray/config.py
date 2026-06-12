@@ -36,6 +36,8 @@ class DatasetConfig:
         self.images_dir = self.images_dir.format(
             downsampling=self.downsampling, source_path=self.source_path
         )
+        if self.fisheye:
+            self.images_dir = self.images_dir.replace("images_", "input_")
         self.point_cloud_file = self.point_cloud_file.format(
             downsampling=self.downsampling, source_path=self.source_path, images_dir=self.images_dir
         )
