@@ -16,9 +16,9 @@ class DatasetConfig:
     
     eval: bool = True  
 
-    fisheye: Annotated[bool, arg(aliases=["-f"])] = False  # * Train on raw fisheye images with OPENCV_FISHEYE rays
+    fisheye: Annotated[bool, arg(aliases=["-f"])] = True  # * Train on raw fisheye images with OPENCV_FISHEYE rays
     colmap_sparse_subdir: str = "sparse/0"  # * Overridden to the distorted reconstruction when fisheye=True
-    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["pinhole"])
+    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["fisheye"])
 
     # * Fisheye vignette masking (only applied when fisheye=True); ignores invalid pixels in loss and metrics
     fisheye_mask_geometric: bool = True  # * Mask pixels outside the lens disk (radial mask)
@@ -36,6 +36,8 @@ class DatasetConfig:
         self.images_dir = self.images_dir.format(
             downsampling=self.downsampling, source_path=self.source_path
         )
+        if self.fisheye:
+            self.images_dir = self.images_dir.replace("images_", "input_")
         self.point_cloud_file = self.point_cloud_file.format(
             downsampling=self.downsampling, source_path=self.source_path, images_dir=self.images_dir
         )
@@ -84,6 +86,7 @@ class RaytracerConfig:
 
     # * Optimization
     iterations: Annotated[int, arg(aliases=["-t"])]  = 15_000
+    batch_size: int = 1  # * Cameras per optimization step (gradient accumulation)
     lr_mean_init: float = 0.00016
     lr_mean_final: float = 0.0000016
     lr_channels: float = 0.0025  # * Only used when SH are disabled
@@ -128,6 +131,16 @@ class RaytracerConfig:
     exposure_comp_lr_delay_mult: float = 0.001
     exposure_comp_lr_max_steps: int = 5000
 
+    # * Vignetting compensation (one global set of parameters shared by all views)
+    vignetting_comp: bool = False
+    vignetting_coeff_lr: float = 0.001
+    vignetting_pp_lr: float = 0.001
+    vignetting_activation: Literal["exp", "relu"] = "relu"
+    vignetting_terms: int = 0  # * Number of even-power radial terms (r^2, r^4, ...)
+    vignetting_include_linear_term: bool = True
+    vignetting_srgb_comp: bool = False  # * Apply the vignette in (approximate) linear space
+    load_vignetting: Optional[str] = None  # * Load fixed vignetting parameters from a safetensors file
+
     # * MLP settings
     pre_mlp: bool = False
     pre_mlp_feature_size: int = 8
@@ -143,6 +156,10 @@ class RaytracerConfig:
     post_mlp_freq_bands: Optional[int] = 1  # * Optimal value may be scene-dependent
     tcnn: bool = False
 
+    @property
+    def num_vignetting_coefficients(self) -> int:
+        return self.vignetting_terms + int(self.vignetting_include_linear_term)
+
     def __post_init__(self):
         # * Ensure save_iters includes the final iteration
         if self.iterations not in self.save_iters:
@@ -153,6 +170,12 @@ class RaytracerConfig:
             self.preview_iters.append(self.iterations)
 
         # * Enforce valid configurations
+        assert self.batch_size >= 1
+        assert self.vignetting_terms >= 0
+        if self.vignetting_comp:
+            assert self.num_vignetting_coefficients >= 1, (
+                "Vignetting requires at least one coefficient (linear term or vignetting_terms)"
+            )
         assert self.sh_init_degree <= self.sh_max_degree
         assert 0 <= self.sh_max_degree <= 3
         if self.sh:

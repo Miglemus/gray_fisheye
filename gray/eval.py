@@ -10,7 +10,7 @@ EvalMode = Literal["pinhole", "fisheye"]
 
 EVAL_MODEL_PRESETS: Dict[EvalMode, Tuple[str, str]] = {
     "pinhole": ("sparse/0", "images_{downsampling}"),
-    "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "fisheye": ("distorted/sparse/0", "input_{downsampling}"),
 }
 
 

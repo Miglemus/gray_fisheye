@@ -14,7 +14,6 @@ class RenderCLI:
 
     iteration: Annotated[int, arg(aliases=["-t"])] = -1
     splits: List[Literal["train", "test"]] = field(default_factory=lambda: ["test"])
-    eval_models: List[Literal["pinhole", "opencv_fisheye"]] = field(default_factory=lambda: ["pinhole"])
 
     # * Optional changes to this image size
     intrinsics: Annotated[Optional[os.PathLike], arg(help="JSON file with camera intrinsics (and model name, e.g. 'opencv_fisheye'); defaults to source_path parameters")] = None
@@ -49,15 +48,13 @@ else:
     iteration = search_for_max_iteration(cli.model_path)
     save_path = os.path.join(cli.model_path, f"gaussians_{iteration:05d}.safetensors")
 
-eval_modes = cli.eval_models or cfg.resolved_eval_modes()
+eval_modes = cfg.resolved_eval_modes()
 
 
 def load_render_views(mode, *, load_images=True):
     try:
         return load_eval_views(cfg, mode, load_images=load_images)
     except FileNotFoundError:
-        if cli.eval_models:
-            raise
         print(
             f"Colmap dataset not found at '{cfg.source_path}'; "
             f"falling back to cameras saved in the model's cameras.json"
