@@ -83,6 +83,16 @@ def mode_sparse_subdir(mode: EvalMode) -> str:
     return EVAL_MODEL_PRESETS[mode][0]
 
 
+def load_eval_gt_images(cfg: Config, mode: EvalMode, cameras) -> Dict[str, torch.Tensor]:
+    gt_dir = os.path.join(cfg.source_path, format_eval_images_dir(cfg, mode))
+    from torchvision.io import read_image, ImageReadMode
+
+    return {
+        cam.image_name: read_image(os.path.join(gt_dir, os.path.basename(cam.image_path)), ImageReadMode.RGB).cuda() / 255
+        for cam in cameras
+    }
+
+
 def load_eval_views(
     cfg: Config,
     mode: EvalMode,

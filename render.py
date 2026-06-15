@@ -2,6 +2,7 @@ from gray.imports import *
 from gray.prelude import *
 from gray.eval import (
     load_eval_views,
+    load_eval_gt_images,
     scene_to_views,
     source_mode_for_eval,
     uses_custom_intrinsics,
@@ -10,7 +11,7 @@ from gray.eval import (
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from gray.camera_models import CAMERA_PARAM_KEYS, gray_models_equal, normalize_gray_model
+from gray.camera_models import CAMERA_PARAM_KEYS, gray_models_equal, is_fisheye_gray_model, normalize_gray_model
 from run_colmap_fixed import load_config
 import os
 
@@ -39,7 +40,16 @@ cli, unknown_args = tyro.cli(RenderCLI, return_unknown_args=True)
 
 # * Load the config from JSON and allow for Config overrides
 saved_cli_path = os.path.join(cli.model_path, "config.json")
-cfg = tyro.cli(Config, args=unknown_args, default=Config(**json.load(open(saved_cli_path, "r"))))
+try:
+    json_configuration = json.load(open(saved_cli_path, "r"))
+    default = Config(**json_configuration)
+except TypeError as e:
+    print(f"Error loading config: {e}. Using default config.")
+    if json_configuration.get("fisheye"):
+        del json_configuration["fisheye"]
+    default = Config(**json_configuration)
+
+cfg = tyro.cli(Config, args=unknown_args, default=default)
 
 camera_config = None
 if cli.intrinsics is not None:
@@ -120,6 +130,13 @@ print("Rendering iteration", iteration)
 executor = ThreadPoolExecutor()
 for camera_model in eval_modes:
     views = load_render_views(camera_model)
+    gt_from_distorted = (
+        is_fisheye_gray_model(camera_model)
+        and gray_models_equal(
+            source_mode_for_eval(camera_model, cfg.camera_model, intrinsics_model=intrinsics_model),
+            "pinhole",
+        )
+    )
     for split in cli.splits:
         dir_name = os.path.join(cli.model_path, split, f"{iteration:05d}", camera_model)
         os.makedirs(os.path.join(dir_name, "renders"), exist_ok=True)
@@ -129,9 +146,19 @@ for camera_model in eval_modes:
             save_image(views.valid_mask.float()[None], os.path.join(dir_name, "valid_mask.png"))
 
         if split == "train":
-            cameras, images = views.train_cameras, views.train_images
+            cameras = views.train_cameras
+            gt_images = (
+                load_eval_gt_images(cfg, camera_model, cameras)
+                if gt_from_distorted
+                else views.train_images
+            )
         elif split == "test":
-            cameras, images = views.test_cameras, views.test_images
+            cameras = views.test_cameras
+            gt_images = (
+                load_eval_gt_images(cfg, camera_model, cameras)
+                if gt_from_distorted
+                else views.test_images
+            )
 
         if cli.znear_list is not None and len(cli.znear_list) != len(cameras):
             raise ValueError(
@@ -150,7 +177,7 @@ for camera_model in eval_modes:
         futures = []
 
         for i, cam in enumerate(cameras):
-            gt = images.get(cam.image_name)
+            gt = gt_images.get(cam.image_name)
             if cli.fov_y is not None:
                 cam.fov_y = cli.fov_y
 
