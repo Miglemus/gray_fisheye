@@ -79,7 +79,7 @@ struct CameraDataHolder : torch::CustomClassHolder {
     Tensor zfar = torch::zeros({1}, CUDA_FLOAT32);
 
     Tensor model_id = torch::zeros({1}, CUDA_INT32);        // * defaults to CAMERA_MODEL_PINHOLE
-    Tensor fisheye_params = torch::zeros({12}, CUDA_FLOAT32); // * fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1
+    Tensor fisheye_params = torch::zeros({12}, CUDA_FLOAT32); // * fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1
 
     Camera reify() {
         return Camera{
@@ -111,7 +111,7 @@ struct CameraDataHolder : torch::CustomClassHolder {
     }
 
     void set_thin_prism_fisheye(const Tensor &params) {
-        TORCH_CHECK(params.numel() == 12, "thin prism fisheye params must have 12 elements (fx, fy, cx, cy, k1..k4, p1, p2, sx1, sy1)");
+        TORCH_CHECK(params.numel() == 12, "thin prism fisheye params must have 12 elements (fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1)");
         model_id.fill_(CAMERA_MODEL_THIN_PRISM_FISHEYE);
         fisheye_params.copy_(params.reshape({12}));
     }

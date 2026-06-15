@@ -55,10 +55,10 @@ class CameraInfo:
             fov_x = focal2fov(fx, width)
             intrinsics = np.array([fx, fy, cx, cy, k1, k2, k3, k4], dtype=np.float64)
         elif intr.model == "THIN_PRISM_FISHEYE":
-            fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1 = intr.params
+            fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1 = intr.params
             fov_y = focal2fov(fy, height)
             fov_x = focal2fov(fx, width)
-            intrinsics = np.array([fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1], dtype=np.float64)
+            intrinsics = np.array([fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1], dtype=np.float64)
         else:
             assert False, (
                 "Colmap camera model not handled: only PINHOLE, SIMPLE_PINHOLE, "

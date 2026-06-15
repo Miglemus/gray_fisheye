@@ -98,69 +98,74 @@ def test_fisheye_rays_match_opencv():
     assert float(np.max(pix_err)) < 0.02, "fisheye rays do not reproject to their pixels"
 
 
-def _thin_prism_unproject(u_pix, v_pix, params):
-    fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1 = params
-    u_target = (u_pix - cx) / fx
-    v_target = (v_pix - cy) / fy
-    u_final, v_final = u_target, v_target
-    for _ in range(20):
-        r2 = u_final * u_final + v_final * v_final
-        r = np.sqrt(r2)
-        if r > 0.0:
-            theta = np.arctan(r)
-            theta2 = theta * theta
-            theta_d = theta * (1.0 + k1 * theta2 + k2 * theta2**2 + k3 * theta2**3 + k4 * theta2**4)
-            u_fe = (theta_d / r) * u_final
-            v_fe = (theta_d / r) * v_final
-        else:
-            u_fe, v_fe = u_final, v_final
-        u_est = u_fe + 2.0 * p1 * u_final * v_final + p2 * (r2 + 2.0 * u_final * u_final) + sx1 * r2
-        v_est = v_fe + p1 * (r2 + 2.0 * v_final * v_final) + 2.0 * p2 * u_final * v_final + sy1 * r2
-        u_final += u_target - u_est
-        v_final += v_target - v_est
+def _thin_prism_distortion(u, v, extra):
+    k1, k2, p1, p2, k3, k4, sx1, sy1 = extra
+    r2 = u * u + v * v
+    radial = k1 * r2 + k2 * r2**2 + k3 * r2**3 + k4 * r2**4
+    du = u * radial + 2.0 * p1 * u * v + p2 * (r2 + 2.0 * u * u) + sx1 * r2
+    dv = v * radial + 2.0 * p2 * u * v + p1 * (r2 + 2.0 * v * v) + sy1 * r2
+    return du, dv
 
-    max_theta = np.pi / 2
-    r_final = np.sqrt(u_final * u_final + v_final * v_final)
-    theta_final = np.arctan(r_final)
-    t2 = max_theta * max_theta
-    theta_d_max = max_theta * (1.0 + k1 * t2 + k2 * t2**2 + k3 * t2**3 + k4 * t2**4)
-    theta2_f = theta_final * theta_final
-    theta_d_final = theta_final * (
-        1.0 + k1 * theta2_f + k2 * theta2_f**2 + k3 * theta2_f**3 + k4 * theta2_f**4
-    )
-    if theta_final >= max_theta or theta_d_final >= theta_d_max:
+
+def _thin_prism_unproject(u_pix, v_pix, params):
+    fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1 = params
+    extra = (k1, k2, p1, p2, k3, k4, sx1, sy1)
+    uu = (u_pix - cx) / fx
+    vv = (v_pix - cy) / fy
+    uu0, vv0 = uu, vv
+    for _ in range(100):
+        du, dv = _thin_prism_distortion(uu, vv, extra)
+        next_uu = uu0 - du
+        next_vv = vv0 - dv
+        if (next_uu - uu) ** 2 + (next_vv - vv) ** 2 < 1e-10:
+            uu, vv = next_uu, next_vv
+            break
+        uu, vv = next_uu, next_vv
+    else:
         return np.zeros(3, dtype=np.float64)
-    inv_norm = 1.0 / np.sqrt(u_final * u_final + v_final * v_final + 1.0)
-    return np.array([u_final * inv_norm, v_final * inv_norm, inv_norm], dtype=np.float64)
+
+    theta = np.sqrt(uu * uu + vv * vv)
+    if theta >= np.pi / 2:
+        return np.zeros(3, dtype=np.float64)
+
+    u, v = uu, vv
+    theta_cos_theta = theta * np.cos(theta)
+    if theta_cos_theta > 1e-8:
+        scale = np.sin(theta) / theta_cos_theta
+        u *= scale
+        v *= scale
+
+    inv_norm = 1.0 / np.sqrt(u * u + v * v + 1.0)
+    return np.array([u * inv_norm, v * inv_norm, inv_norm], dtype=np.float64)
 
 
 def _thin_prism_project(cam_xyz, params):
-    fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1 = params
+    fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1 = params
+    extra = (k1, k2, p1, p2, k3, k4, sx1, sy1)
     u = cam_xyz[0] / cam_xyz[2]
     v = cam_xyz[1] / cam_xyz[2]
-    r2 = u * u + v * v
-    r = np.sqrt(r2)
+    r = np.sqrt(u * u + v * v)
     if r > 0.0:
         theta = np.arctan(r)
-        theta2 = theta * theta
-        theta_d = theta * (1.0 + k1 * theta2 + k2 * theta2**2 + k3 * theta2**3 + k4 * theta2**4)
-        u_fe = (theta_d / r) * u
-        v_fe = (theta_d / r) * v
+        scale = theta / r
+        uu = scale * u
+        vv = scale * v
     else:
-        u_fe, v_fe = u, v
-    u_dist = u_fe + 2.0 * p1 * u * v + p2 * (r2 + 2.0 * u * u) + sx1 * r2
-    v_dist = v_fe + p1 * (r2 + 2.0 * v * v) + 2.0 * p2 * u * v + sy1 * r2
-    return fx * u_dist + cx, fy * v_dist + cy
+        uu, vv = 0.0, 0.0
+    du, dv = _thin_prism_distortion(uu, vv, extra)
+    return fx * (uu + du) + cx, fy * (vv + dv) + cy
 
 
 def test_thin_prism_fisheye_rays_match_reference():
     W, H = 80, 60
     fx, fy = 95.0, 96.5
     cx, cy = W / 2 - 1.7, H / 2 + 2.3
-    k1, k2, k3, k4 = -0.034688, 0.002964, -0.003554, 0.000424
-    p1, p2, sx1, sy1 = 1e-4, -2e-4, 3e-4, -1e-4
+    k1, k2 = -0.034688, 0.002964
+    p1, p2 = 1e-4, -2e-4
+    k3, k4 = -0.003554, 0.000424
+    sx1, sy1 = 3e-4, -1e-4
     intrinsics = np.array(
-        [fx, fy, cx, cy, k1, k2, k3, k4, p1, p2, sx1, sy1], dtype=np.float64
+        [fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1], dtype=np.float64
     )
 
     axis = np.array([0.3, -0.7, 0.5])
@@ -218,7 +223,10 @@ def test_thin_prism_fisheye_rays_match_reference():
         [_thin_prism_unproject(u, v, intrinsics) for u, v in zip(u_pix, v_pix)], axis=0
     )
     valid = np.linalg.norm(ref_dirs, axis=-1) > 0.5
-    ref_world = np.stack([d @ c2w_blender.T for d in ref_dirs[valid]], axis=0)
+    ref_gray = ref_dirs[valid].copy()
+    ref_gray[:, 1] *= -1.0
+    ref_gray[:, 2] *= -1.0
+    ref_world = ref_gray @ c2w_blender.T
     ref_world = ref_world / np.linalg.norm(ref_world, axis=-1, keepdims=True)
     ang_err = np.arccos(np.clip((cuda_dirs[valid] * ref_world).sum(-1), -1.0, 1.0))
     print(f"max angular error vs Python TPF: {float(np.max(ang_err)):.3e} rad")
