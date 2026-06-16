@@ -3,10 +3,7 @@ from __future__ import annotations
 from gray.imports import *
 from gray.camera_models import (
     GrayCameraModel,
-    gray_models_equal,
-    gray_model_from_colmap,
-    is_fisheye_gray_model,
-    normalize_gray_model,
+    GrayCameraModelClass,
 )
 from gray.config import Config
 from gray.scene import ColmapViews, SceneInfo, load_colmap_views
@@ -16,53 +13,22 @@ from gray.utils import masked_psnr, masked_ssim
 EvalMode = GrayCameraModel
 
 
-def uses_custom_intrinsics(
-    mode: EvalMode, colmap_camera_model: EvalMode, intrinsics_model: Optional[str]
-) -> bool:
-    if gray_models_equal(mode, "pinhole") or gray_models_equal(mode, colmap_camera_model):
-        return False
-    return intrinsics_model is not None and gray_models_equal(mode, intrinsics_model)
-
-
 def validate_eval_modes(
-    eval_modes: List[EvalMode],
-    colmap_camera_model: EvalMode,
+    eval_modes: List[GrayCameraModelClass],
+    colmap_camera_model: GrayCameraModelClass,
     *,
-    intrinsics_model: Optional[str] = None,
+    intrinsics_model: Optional[GrayCameraModelClass] = None,
 ) -> None:
     """Each eval mode must be pinhole, the COLMAP model, or covered by --intrinsics."""
-    colmap_camera_model = normalize_gray_model(colmap_camera_model)
-    normalized_intrinsics = (
-        normalize_gray_model(intrinsics_model) if intrinsics_model is not None else None
-    )
+
     for mode in eval_modes:
-        mode = normalize_gray_model(mode)
-        if gray_models_equal(mode, "pinhole") or gray_models_equal(mode, colmap_camera_model):
+        if mode == GrayCameraModelClass("pinhole") or mode == colmap_camera_model or mode == intrinsics_model:
             continue
-        if uses_custom_intrinsics(mode, colmap_camera_model, normalized_intrinsics):
-            continue
+
         raise ValueError(
-            f"Camera model '{mode}' is neither pinhole nor the COLMAP model "
+            f"Camera model '{mode}' is neither pinhole nor the COLMAP model nor the intrinsics model. "
             f"('{colmap_camera_model}'). Provide --intrinsics with a matching model."
         )
-
-
-def source_mode_for_eval(
-    mode: EvalMode,
-    colmap_camera_model: EvalMode,
-    *,
-    intrinsics_model: Optional[str] = None,
-) -> EvalMode:
-    """COLMAP dataset to load poses/images from for a given eval mode."""
-    mode = normalize_gray_model(mode)
-    colmap_camera_model = normalize_gray_model(colmap_camera_model)
-    normalized_intrinsics = (
-        normalize_gray_model(intrinsics_model) if intrinsics_model is not None else None
-    )
-    validate_eval_modes([mode], colmap_camera_model, intrinsics_model=normalized_intrinsics)
-    if gray_models_equal(mode, "pinhole") or gray_models_equal(mode, colmap_camera_model):
-        return mode
-    return colmap_camera_model
 
 
 EVAL_MODEL_PRESETS: Dict[EvalMode, Tuple[str, str]] = {
@@ -95,18 +61,18 @@ def load_eval_gt_images(cfg: Config, mode: EvalMode, cameras) -> Dict[str, torch
 
 def load_eval_views(
     cfg: Config,
-    mode: EvalMode,
+    mode: GrayCameraModelClass,
     *,
     load_images=True,
-    expected_camera_model: Optional[EvalMode] = None,
+    expected_camera_model: Optional[GrayCameraModelClass] = None,
 ) -> ColmapViews:
     return load_colmap_views(
         cfg,
-        sparse_subdir=mode_sparse_subdir(mode),
-        images_dir=format_eval_images_dir(cfg, mode),
-        apply_fisheye_mask=is_fisheye_gray_model(mode),
+        sparse_subdir=mode.sparse_subdir(),
+        images_dir=format_eval_images_dir(cfg, mode.name),
+        apply_fisheye_mask=mode.is_fisheye() and cfg.fisheye_mask_geometric,
         load_images=load_images,
-        expected_camera_model=normalize_gray_model(expected_camera_model or mode),
+        expected_camera_model=expected_camera_model or mode,
     )
 
 

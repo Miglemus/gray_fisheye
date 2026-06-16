@@ -4,15 +4,13 @@ from gray.eval import (
     load_eval_views,
     load_eval_gt_images,
     scene_to_views,
-    source_mode_for_eval,
-    uses_custom_intrinsics,
     validate_eval_modes,
 )
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from gray.camera_models import CAMERA_PARAM_KEYS, gray_models_equal, is_fisheye_gray_model, normalize_gray_model
-from run_colmap_fixed import load_config
+from gray.camera_models import GrayCameraModelClass, CAMERA_PARAM_KEYS
+from run_colmap_fixed import CameraConfig, load_config
 import os
 
 
@@ -33,6 +31,15 @@ class RenderCLI:
     # Optional per-frame znear overrides
     znear_list: Optional[List[float]] = None
     znear: float = 0.0
+
+    def __post_init__(self):
+        self.eval_models = [GrayCameraModelClass(mode) for mode in self.eval_models]
+        if self.intrinsics:
+            camera_config = load_config(Path(self.intrinsics))
+            camera_model = GrayCameraModelClass(camera_config.model)
+
+            if not any(camera_model == eval_mode for eval_mode in self.eval_models):
+                self.eval_models.append(camera_model)
 
 
 # * Parse Config
@@ -66,45 +73,31 @@ else:
     iteration = search_for_max_iteration(cli.model_path)
     save_path = os.path.join(cli.model_path, f"gaussians_{iteration:05d}.safetensors")
 
-eval_modes = cli.eval_models or cfg.resolved_eval_modes()
-intrinsics_model = (
-    normalize_gray_model(camera_config.model) if camera_config is not None else None
-)
-eval_modes = [normalize_gray_model(mode) for mode in eval_modes]
-validate_eval_modes(eval_modes, cfg.camera_model, intrinsics_model=intrinsics_model)
-
+# * Manage camera models
+# * we want to find the colmap camera model used during colmap
+# * then validate if all eval modes are either colmap model or pinhole
+# * if not, make sure an intrinsics model is provided and use that for rendering
+colmap_model = GrayCameraModelClass(cfg.camera_model)
+intrinsics_model = None if camera_config is None else GrayCameraModelClass(camera_config.model)
+validate_eval_modes(cli.eval_models, colmap_model, intrinsics_model=intrinsics_model)
+eval_modes = cli.eval_models
 
 def load_render_views(mode, *, load_images=True):
-    source_mode = source_mode_for_eval(
-        mode,
-        cfg.camera_model,
-        intrinsics_model=intrinsics_model,
-    )
-    custom_intrinsics = uses_custom_intrinsics(mode, cfg.camera_model, intrinsics_model)
-    try:
+    if mode == colmap_model or mode == GrayCameraModelClass("pinhole"):
         return load_eval_views(
             cfg,
-            source_mode,
+            mode,
             load_images=load_images,
-            expected_camera_model=None if custom_intrinsics else mode,
         )
-    except FileNotFoundError:
-        if cli.eval_models:
-            raise
-        print(
-            f"Colmap dataset not found at '{cfg.source_path}'; "
-            f"falling back to cameras saved in the model's cameras.json"
+    else:
+        return scene_to_views(
+            SceneInfo.from_cameras_json(
+                cfg.model_path,
+                camera_model=camera_config,
+                parse_images=load_images,
+            )
         )
-        views = scene_to_views(SceneInfo.from_cameras_json(cli.model_path, parse_images=load_images))
-        if not custom_intrinsics:
-            cameras = views.train_cameras or views.test_cameras
-            if cameras and not gray_models_equal(cameras[0].model, mode):
-                raise ValueError(
-                    f"Expected camera model '{mode}' but cameras.json uses "
-                    f"'{cameras[0].model}'. Provide --intrinsics with a matching model."
-                )
-        return views
-
+    
 
 probe_views = {mode: load_render_views(mode, load_images=False) for mode in eval_modes}
 all_cameras = [
@@ -130,13 +123,7 @@ print("Rendering iteration", iteration)
 executor = ThreadPoolExecutor()
 for camera_model in eval_modes:
     views = load_render_views(camera_model)
-    gt_from_distorted = (
-        is_fisheye_gray_model(camera_model)
-        and gray_models_equal(
-            source_mode_for_eval(camera_model, cfg.camera_model, intrinsics_model=intrinsics_model),
-            "pinhole",
-        )
-    )
+
     for split in cli.splits:
         dir_name = os.path.join(cli.model_path, split, f"{iteration:05d}", camera_model)
         os.makedirs(os.path.join(dir_name, "renders"), exist_ok=True)
@@ -149,14 +136,14 @@ for camera_model in eval_modes:
             cameras = views.train_cameras
             gt_images = (
                 load_eval_gt_images(cfg, camera_model, cameras)
-                if gt_from_distorted
+                if camera_model == intrinsics_model
                 else views.train_images
             )
         elif split == "test":
             cameras = views.test_cameras
             gt_images = (
                 load_eval_gt_images(cfg, camera_model, cameras)
-                if gt_from_distorted
+                if camera_model == intrinsics_model
                 else views.test_images
             )
 
@@ -166,9 +153,9 @@ for camera_model in eval_modes:
             )
 
         cam_intrinsics = None
-        if camera_config is not None and gray_models_equal(camera_model, camera_config.model):
-            param_key = normalize_gray_model(camera_config.model)
-            params = list(camera_config.params)
+        if camera_config is not None and camera_model == intrinsics_model:
+            param_key = GrayCameraModelClass(camera_config.model)
+            params = list(camera_config.intrinsics)
             for i, param in enumerate(CAMERA_PARAM_KEYS[param_key]):
                 if param in ["fx", "fy", "cx", "cy"]:
                     params[i] /= int(cfg.downsampling)

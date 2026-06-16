@@ -6,6 +6,59 @@ from typing import Dict, Literal, Tuple
 
 GrayCameraModel = Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]
 
+EVAL_MODEL_PRESETS: Dict[GrayCameraModel, Tuple[str, str]] = {
+    "pinhole": ("sparse/0", "images_{downsampling}"),
+    "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+}
+
+
+class GrayCameraModelClass:
+    ALLOWED_MODELS = ("pinhole", "opencv_fisheye", "thin_prism_fisheye")
+    FISHEYE_MODELS = ("opencv_fisheye", "thin_prism_fisheye")
+
+    def __init__(self, name: str | GrayCameraModelClass):
+        if isinstance(name, GrayCameraModelClass):
+            self.name = name.name
+        else:
+            self.name = name.lower()
+
+        if self.name not in self.ALLOWED_MODELS:
+            raise ValueError(
+                f"Unknown camera model '{name}'. "
+                f"Supported models: {', '.join(self.ALLOWED_MODELS)}"
+            )
+
+    def __eq__(self, other):
+        if isinstance(other, GrayCameraModelClass):
+            return self.name == other.name
+        if isinstance(other, str):
+            return self.name == GrayCameraModelClass(other).name
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __str__(self):
+        return self.name
+
+    def __fspath__(self):
+        return self.name
+
+    def is_fisheye(self) -> bool:
+        return self.name in self.FISHEYE_MODELS
+    
+    def sparse_subdir(self) -> str:
+        return EVAL_MODEL_PRESETS[self.name][0]
+
+    @classmethod
+    def from_custom_intrinsics(cls, intrinsics_dict) -> GrayCameraModelClass:
+        model_name = intrinsics_dict.get("model") or intrinsics_dict.get("camera_model")
+        if model_name is None:
+            raise ValueError("Custom intrinsics must include a 'model' key.")
+        return cls(model_name)
+
+
 GRAY_CAMERA_MODELS: Tuple[GrayCameraModel, ...] = (
     "pinhole",
     "opencv_fisheye",
@@ -62,8 +115,10 @@ _GRAY_TO_COLMAP: Dict[GrayCameraModel, str] = {
 }
 
 
-def normalize_param_key(name: str) -> str:
+def normalize_param_key(name: str | GrayCameraModelClass) -> str:
     """Normalize any alias to the lowercase key used in CAMERA_PARAM_KEYS."""
+    if isinstance(name, GrayCameraModelClass):
+        name = name.name
     if name in _COLMAP_TO_PARAM_KEY:
         return _COLMAP_TO_PARAM_KEY[name]
     key = name.strip().lower()
@@ -75,8 +130,10 @@ def normalize_param_key(name: str) -> str:
     )
 
 
-def normalize_gray_model(name: str) -> GrayCameraModel:
+def normalize_gray_model(name: str | GrayCameraModelClass) -> GrayCameraModel:
     """Normalize any alias to the canonical gray pipeline model name."""
+    if isinstance(name, GrayCameraModelClass):
+        return name.name
     if name in COLMAP_TO_GRAY:
         return COLMAP_TO_GRAY[name]
     key = normalize_param_key(name)

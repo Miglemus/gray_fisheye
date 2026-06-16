@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from tyro.conf import arg
 from typing import Annotated, List, Optional
 
-from gray.camera_models import GrayCameraModel, is_fisheye_gray_model, normalize_gray_model
+from gray.camera_models import GrayCameraModel, GrayCameraModelClass, is_fisheye_gray_model, normalize_gray_model
 
 
 @dataclass
@@ -28,8 +28,6 @@ class DatasetConfig:
     fisheye_mask_radius_scale: float = 0.95
 
     def __post_init__(self):
-        self.camera_model = normalize_gray_model(self.camera_model)
-        self.eval_modes = [normalize_gray_model(mode) for mode in self.eval_modes]
         # * Fisheye uses the distorted COLMAP reconstruction and the raw (resized) images
         if is_fisheye_gray_model(self.camera_model):
             self.colmap_sparse_subdir = "distorted/sparse/0"
@@ -175,7 +173,7 @@ class Config(RaytracerConfig, DatasetConfig):
         DatasetConfig.__post_init__(self)
         RaytracerConfig.__post_init__(self)
 
-    def resolved_eval_modes(self) -> List[GrayCameraModel]:
+    def resolved_eval_modes(self) -> List[GrayCameraModelClass]:
         if self.eval_modes:
             return self.eval_modes
         return [self.camera_model]

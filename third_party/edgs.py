@@ -974,6 +974,7 @@ if __name__ == "__main__":
     setattr(edgs_cli, "half_res_iters", 0)
     setattr(edgs_cli, "colmap_sparse_subdir", "sparse/0")
     setattr(edgs_cli, "fisheye", False)
+    setattr(edgs_cli, "camera_model", "pinhole")
     scene = SceneInfo.from_colmap(edgs_cli, parse_point_cloud=False)
 
     init_gaussians_with_corr(None, scene, edgs_cli, "cuda", verbose=False)

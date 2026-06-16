@@ -6,6 +6,9 @@ from typing import Optional
 import numpy as np
 import torch
 
+from gray.camera import CameraInfo
+from run_colmap_fixed import CameraConfig
+
 
 # * Off-axis angle bounding the OpenCV fisheye imaged disk; pixels past this lie
 # * outside the lens' valid field of view (matches cuda/core/fisheye.cuh).
@@ -90,7 +93,7 @@ def geometric_valid_mask_thin_prism_fisheye(intrinsics, height: int, width: int,
     return mask
 
 
-def build_fisheye_mask(cam, height: int, width: int, device, cfg) -> Optional[torch.Tensor]:
+def build_fisheye_mask(cam: CameraInfo, height: int, width: int, device, cfg) -> Optional[torch.Tensor]:
     """Build the shared radial fisheye validity mask as a [H, W] bool tensor.
 
     One mask suffices for every view when intrinsics and resolution are shared.

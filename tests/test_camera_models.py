@@ -63,7 +63,7 @@ def test_load_config_accepts_uppercase_model_in_params_json(tmp_path):
 
     camera = load_config(path)
     assert camera.model == "opencv_fisheye"
-    assert len(camera.params) == len(CAMERA_PARAM_KEYS["opencv_fisheye"])
+    assert len(camera.intrinsics) == len(CAMERA_PARAM_KEYS["opencv_fisheye"])
 
 
 def test_config_normalizes_camera_model_case(tmp_path):

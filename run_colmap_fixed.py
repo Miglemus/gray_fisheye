@@ -23,8 +23,9 @@ from gray.colmap import CAMERA_MODEL_NAMES, best_reconstruction_model
 @dataclass
 class CameraConfig:
     model: str
-    params: List[float]
-
+    intrinsics: List[float]
+    width: int
+    height: int
 
 @dataclass
 class CLI:
@@ -84,6 +85,7 @@ def load_config(path: Path, default_model: Optional[str] = None) -> CameraConfig
     elif isinstance(data, dict):
         model = _resolve_model(data, default_model)
         params = _params_from_dict(data, model)
+        width, height = int(data["width"]), int(data["height"])
     else:
         raise ValueError(f"Expected a JSON object or list in {path}")
 
@@ -92,7 +94,7 @@ def load_config(path: Path, default_model: Optional[str] = None) -> CameraConfig
         gray_model = normalize_gray_model(model)
     except ValueError:
         gray_model = model
-    return CameraConfig(model=gray_model, params=params)
+    return CameraConfig(model=gray_model, intrinsics=params, width=width, height=height)
 
 
 def main():
@@ -103,7 +105,7 @@ def main():
     assert (src / "input").is_dir(), f"Input directory not found: {src / 'input'}"
     (src / "distorted" / "sparse").mkdir(parents=True, exist_ok=True)
 
-    params_str = ",".join(str(p) for p in camera.params)
+    params_str = ",".join(str(p) for p in camera.intrinsics)
     print(f"Using fixed {camera.model}: params={params_str}")
 
     device = pycolmap.Device.cuda if cli.gpu else pycolmap.Device.cpu
