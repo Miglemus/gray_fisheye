@@ -285,22 +285,24 @@ class SceneInfo:
         train_cam_infos = [c for c in cam_infos if not c.is_test]
         test_cam_infos = [c for c in cam_infos if c.is_test]
 
-        single_cam_info = cam_infos[0]
         if camera_model is None:
-            model = GrayCameraModelClass(single_cam_info.model)
-        else: # modify, image_path, image_name, image_width, image_height, model, instrinsics based on camera_model, keep R, T, origin, fov_x, fov_y from single_cam_info
+            model = GrayCameraModelClass(cam_infos[0].model)
+        else:  # Apply the provided camera model to every view, not just the first one.
             model = GrayCameraModelClass(camera_model.model)
 
-            # if pinhole, this function is never called, so necessarily fisheye. replace "images" with "input"
-            single_cam_info.image_path = single_cam_info.image_path.replace("images", "input")
-            single_cam_info.image_name = os.path.basename(single_cam_info.image_path)
-            with Image.open(single_cam_info.image_path) as image:
-                single_cam_info.image_width, single_cam_info.image_height = image.size
+            for cam_info in cam_infos:
+                # If pinhole, this function is never called, so necessarily fisheye.
+                # Replace "images" with "input" for all cameras so the dataset path matches.
+                cam_info.image_path = cam_info.image_path.replace("images", "input")
+                cam_info.image_name = os.path.basename(cam_info.image_path)
+                with Image.open(cam_info.image_path) as image:
+                    cam_info.image_width, cam_info.image_height = image.size
 
-            single_cam_info.model = model
-            single_cam_info.intrinsics = camera_model.intrinsics
+                cam_info.model = model
+                cam_info.intrinsics = camera_model.intrinsics
 
         if model.is_fisheye():
+            single_cam_info = cam_infos[0]
             valid_mask = build_fisheye_mask(
                 single_cam_info,
                 single_cam_info.image_height,
