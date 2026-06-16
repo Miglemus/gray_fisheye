@@ -3,6 +3,7 @@ from gray.prelude import *
 from gray.eval import (
     load_eval_views,
     load_eval_gt_images,
+    normalize_intrinsics_file,
     scene_to_views,
     validate_eval_modes,
 )
@@ -10,7 +11,7 @@ from gray.eval import (
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from gray.camera_models import GrayCameraModelClass, CAMERA_PARAM_KEYS
-from run_colmap_fixed import CameraConfig, load_config
+from run_colmap_fixed import load_config
 import os
 
 
@@ -23,7 +24,7 @@ class RenderCLI:
     eval_models: List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]] = field(default_factory=lambda: ["pinhole"])
 
     # * Optional changes to this image size
-    intrinsics: Annotated[Optional[os.PathLike], arg(help="JSON file with camera intrinsics (and model name, e.g. 'opencv_fisheye'); defaults to source_path parameters")] = None
+    intrinsics: Annotated[Optional[os.PathLike], arg(help="JSON or colmap bin/txt file with camera intrinsics (and model name, e.g. 'opencv_fisheye'); defaults to source_path parameters")] = None
     width: Optional[int] = None
     height: Optional[int] = None
     fov_y: Optional[float] = None
@@ -35,7 +36,7 @@ class RenderCLI:
     def __post_init__(self):
         self.eval_models = [GrayCameraModelClass(mode) for mode in self.eval_models]
         if self.intrinsics:
-            camera_config = load_config(Path(self.intrinsics))
+            camera_config = normalize_intrinsics_file(self.intrinsics)
             camera_model = GrayCameraModelClass(camera_config.model)
 
             if not any(camera_model == eval_mode for eval_mode in self.eval_models):
@@ -60,7 +61,7 @@ cfg = tyro.cli(Config, args=unknown_args, default=default)
 
 camera_config = None
 if cli.intrinsics is not None:
-    camera_config = load_config(Path(cli.intrinsics))
+    camera_config = normalize_intrinsics_file(Path(cli.intrinsics))
 
 # * Make it possible to point directly to a gaussians file
 if cli.model_path.endswith(".safetensors"):

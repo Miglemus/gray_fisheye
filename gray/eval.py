@@ -2,16 +2,35 @@ from __future__ import annotations
 
 from gray.imports import *
 from gray.camera_models import (
+    CAMERA_PARAM_KEYS,
     GrayCameraModel,
     GrayCameraModelClass,
 )
 from gray.config import Config
 from gray.scene import ColmapViews, SceneInfo, load_colmap_views
 from gray.utils import masked_psnr, masked_ssim
+import gray.colmap as colmap
+from run_colmap_fixed import load_config, CameraConfig
 
 
 EvalMode = GrayCameraModel
 
+def normalize_intrinsics_file(intrinsics_path: Path):
+    if intrinsics_path.suffix == ".json":
+        return load_config(intrinsics_path)
+    elif intrinsics_path.suffix == ".bin":
+        camera_cfg = colmap.read_intrinsics_binary(intrinsics_path)
+    elif intrinsics_path.suffix == ".txt":
+        camera_cfg = colmap.read_intrinsics_text(intrinsics_path)
+    else:
+        raise ValueError(f"Unsupported intrinsics file format: {intrinsics_path}")
+    
+    intrinsics_dict = {"intrinsics": [float(v) for v in camera_cfg[1].params]}
+    intrinsics_dict["model"] = camera_cfg[1].model
+    intrinsics_dict["width"] = camera_cfg[1].width
+    intrinsics_dict["height"] = camera_cfg[1].height
+
+    return CameraConfig(**intrinsics_dict)
 
 def validate_eval_modes(
     eval_modes: List[GrayCameraModelClass],
