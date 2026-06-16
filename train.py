@@ -240,6 +240,23 @@ while iteration < cfg.iterations + 1:
                 flush=True,
             )
 
+            # * Log the global vignetting parameters
+            if cfg.vignetting_comp:
+                vignetting_csv_path = os.path.join(cfg.model_path, f"vignetting_{iteration:05d}.csv")
+                with open(vignetting_csv_path, "w") as vignetting_log:
+                    column_names = []
+                    if cfg.vignetting_include_linear_term:
+                        column_names.append("coeff_r1")
+                    column_names.extend(
+                        f"coeff_r{2 * (term_idx + 1)}" for term_idx in range(cfg.vignetting_terms)
+                    )
+                    print(",".join(column_names + ["cx", "cy"]), file=vignetting_log)
+                    coefficients = raytracer.vignetting.coefficients.detach().cpu()
+                    principal_point = raytracer.vignetting.principal_point.detach().cpu()
+                    values = [str(value.item()) for value in coefficients]
+                    values += [str(principal_point[0].item()), str(principal_point[1].item())]
+                    print(",".join(values), file=vignetting_log)
+
         # * Acquire viewer lock
         if cfg.viewer:
             viewer.gaussian_lock.acquire()
@@ -272,10 +289,13 @@ while iteration < cfg.iterations + 1:
             raytracer.set_render_resolution(cam0.image_width, cam0.image_height)
             images = scene.train_images
             mask = scene.valid_mask
-            batch_size = 1
+            batch_size = cfg.batch_size
 
         # *** Forward pass
         batch = [camera_pool.pop() for _ in range(min(batch_size, len(camera_pool)))]
+        batch_size = len(batch)
+        batch_training_l1 = 0.0
+        batch_training_psnr = 0.0
         for camera in batch:
             render_unclamped = raytracer(camera)
             render = render_unclamped.clamp(0, 1)
@@ -300,6 +320,14 @@ while iteration < cfg.iterations + 1:
 
             # *** Backward pass and optimization step
             raytracer.backward(loss / batch_size)
+
+            # * Accumulate batch-averaged training metrics
+            if mask is not None:
+                batch_training_l1 += masked_l1(render, target, mask).item() / batch_size
+                batch_training_psnr += masked_psnr(render, target, mask).item() / batch_size
+            else:
+                batch_training_l1 += F.l1_loss(render, target).item() / batch_size
+                batch_training_psnr += psnr(render[None], target[None]).item() / batch_size
         raytracer.step()
 
         # * Scale decay
@@ -326,14 +354,8 @@ while iteration < cfg.iterations + 1:
             raytracer.cuda_module.rebuild_bvh()
 
         # * Log training curve
-        if mask is not None:
-            training_l1 = masked_l1(render, target, mask).item()
-            training_psnr = masked_psnr(render, target, mask).item()
-        else:
-            training_l1 = F.l1_loss(render, target).item()
-            training_psnr = psnr(render[None], target[None]).item()
-        l1_avg += training_l1 / cfg.log_loss_interval
-        psnr_avg += training_psnr / cfg.log_loss_interval
+        l1_avg += batch_training_l1 / cfg.log_loss_interval
+        psnr_avg += batch_training_psnr / cfg.log_loss_interval
         if iteration % cfg.log_loss_interval == 0 or iteration == 1:
             print(
                 f"{iteration:05d} {l1_avg:.8f} {psnr_avg:.8f}",

@@ -4,6 +4,7 @@ from gray.camera import CameraInfo
 from gray.scene import SceneInfo, BasicPointCloud
 from gray.mlp import PreMLP, PostMLP
 from gray.exposure_comp import ExposureComp
+from gray.vignetting import Vignetting
 
 
 def _find_library_path():
@@ -107,6 +108,14 @@ class Raytracer(torch.nn.Module):
         if cfg.post_mlp:
             self.post_mlp = PostMLP(cfg, num_channels).cuda()
 
+        # * Setup global vignetting compensation (registered as a submodule so its
+        # * parameters are saved/restored with the safetensors state_dict)
+        if cfg.vignetting_comp:
+            self.vignetting = Vignetting(cfg)
+            if cfg.load_vignetting is not None and not inference_only:
+                self.vignetting.load_parameters(cfg.load_vignetting)
+                self.vignetting.set_lrs(0.0, 0.0)
+
         # * Last outputs, kept for backward pass
         self.output_channels = None
 
@@ -186,6 +195,10 @@ class Raytracer(torch.nn.Module):
         else:
             render = output_channels
 
+        # * Apply the global vignetting model (training, evaluation and inference renders)
+        if self.cfg.vignetting_comp:
+            render = self.vignetting(render)
+
         return render
 
     def backward(self, loss):
@@ -213,6 +226,8 @@ class Raytracer(torch.nn.Module):
             self.post_mlp.step()
         if self.cfg.exposure_comp_enabled:
             self.exposure_comp.step()
+        if self.cfg.vignetting_comp:
+            self.vignetting.step()
 
     def set_render_resolution(self, width: int, height: int):
         "Render at a reduced resolution (must not exceed the allocated framebuffer size)."
