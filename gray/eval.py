@@ -1,16 +1,59 @@
 from __future__ import annotations
 
 from gray.imports import *
+from gray.camera_models import (
+    CAMERA_PARAM_KEYS,
+    GrayCameraModel,
+    GrayCameraModelClass,
+)
 from gray.config import Config
 from gray.scene import ColmapViews, SceneInfo, load_colmap_views
 from gray.utils import masked_psnr, masked_ssim
+import gray.colmap as colmap
+from run_colmap_fixed import load_config, CameraConfig
 
 
-EvalMode = Literal["pinhole", "fisheye"]
+EvalMode = GrayCameraModel
+
+def normalize_intrinsics_file(intrinsics_path: Path):
+    if intrinsics_path.suffix == ".json":
+        return load_config(intrinsics_path)
+    elif intrinsics_path.suffix == ".bin":
+        camera_cfg = colmap.read_intrinsics_binary(intrinsics_path)
+    elif intrinsics_path.suffix == ".txt":
+        camera_cfg = colmap.read_intrinsics_text(intrinsics_path)
+    else:
+        raise ValueError(f"Unsupported intrinsics file format: {intrinsics_path}")
+    
+    intrinsics_dict = {"intrinsics": [float(v) for v in camera_cfg[1].params]}
+    intrinsics_dict["model"] = camera_cfg[1].model
+    intrinsics_dict["width"] = camera_cfg[1].width
+    intrinsics_dict["height"] = camera_cfg[1].height
+
+    return CameraConfig(**intrinsics_dict)
+
+def validate_eval_modes(
+    eval_modes: List[GrayCameraModelClass],
+    colmap_camera_model: GrayCameraModelClass,
+    *,
+    intrinsics_model: Optional[GrayCameraModelClass] = None,
+) -> None:
+    """Each eval mode must be pinhole, the COLMAP model, or covered by --intrinsics."""
+
+    for mode in eval_modes:
+        if mode == GrayCameraModelClass("pinhole") or mode == colmap_camera_model or mode == intrinsics_model:
+            continue
+
+        raise ValueError(
+            f"Camera model '{mode}' is neither pinhole nor the COLMAP model nor the intrinsics model. "
+            f"('{colmap_camera_model}'). Provide --intrinsics with a matching model."
+        )
+
 
 EVAL_MODEL_PRESETS: Dict[EvalMode, Tuple[str, str]] = {
     "pinhole": ("sparse/0", "images_{downsampling}"),
-    "fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
 }
 
 
@@ -25,13 +68,30 @@ def mode_sparse_subdir(mode: EvalMode) -> str:
     return EVAL_MODEL_PRESETS[mode][0]
 
 
-def load_eval_views(cfg: Config, mode: EvalMode, *, load_images=True) -> ColmapViews:
+def load_eval_gt_images(cfg: Config, mode: EvalMode, cameras) -> Dict[str, torch.Tensor]:
+    gt_dir = os.path.join(cfg.source_path, format_eval_images_dir(cfg, mode))
+    from torchvision.io import read_image, ImageReadMode
+
+    return {
+        cam.image_name: read_image(os.path.join(gt_dir, os.path.basename(cam.image_path)), ImageReadMode.RGB).cuda() / 255
+        for cam in cameras
+    }
+
+
+def load_eval_views(
+    cfg: Config,
+    mode: GrayCameraModelClass,
+    *,
+    load_images=True,
+    expected_camera_model: Optional[GrayCameraModelClass] = None,
+) -> ColmapViews:
     return load_colmap_views(
         cfg,
-        sparse_subdir=mode_sparse_subdir(mode),
-        images_dir=format_eval_images_dir(cfg, mode),
-        apply_fisheye_mask=mode == "fisheye",
+        sparse_subdir=mode.sparse_subdir(),
+        images_dir=format_eval_images_dir(cfg, mode.name),
+        apply_fisheye_mask=mode.is_fisheye() and cfg.fisheye_mask_geometric,
         load_images=load_images,
+        expected_camera_model=expected_camera_model or mode,
     )
 
 

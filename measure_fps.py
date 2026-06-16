@@ -1,7 +1,6 @@
 from gray.imports import *
 from gray.prelude import *
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 @dataclass
@@ -84,7 +83,7 @@ torch.cuda.synchronize()
 secs = start.elapsed_time(end) / 1000.0
 print(f"Average {cli.context} FPS: {len(cameras) / secs:.2f}")
 if cli.context == "test":
-    with open(os.path.join(cli.model_path, f"fps.csv"), "w") as f:
+    with open(os.path.join(cli.model_path, "fps.csv"), "w") as f:
         f.write(f"{len(cameras) / secs:.2f}\n")
 
     fps_json_path = os.path.join(cli.model_path, "fps_by_scale.json")

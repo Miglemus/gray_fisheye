@@ -9,7 +9,7 @@
 // * Returns (0, 0, 0) for pixels outside the valid field of view (theta >= 90 deg),
 // * i.e. the black vignette corners of a circular fisheye; the caller treats a
 // * zero-length direction as an inactive pixel that renders the background.
-__device__ __forceinline__ float3 fisheye_unproject(const float *params, float u, float v) {
+__device__ __forceinline__ float3 opencv_fisheye_unproject(const float *params, float u, float v) {
     const float fx = params[0];
     const float fy = params[1];
     const float cx = params[2];

@@ -6,6 +6,9 @@ from typing import Optional
 import numpy as np
 import torch
 
+from gray.camera import CameraInfo
+from run_colmap_fixed import CameraConfig
+
 
 # * Off-axis angle bounding the OpenCV fisheye imaged disk; pixels past this lie
 # * outside the lens' valid field of view (matches cuda/core/fisheye.cuh).
@@ -31,7 +34,7 @@ def intrinsics_at_resolution(cam, height: int, width: int) -> np.ndarray:
     return intr
 
 
-def geometric_valid_mask(intrinsics, height: int, width: int, device, radius_scale: float = 1.0):
+def geometric_valid_mask_opencv_fisheye(intrinsics, height: int, width: int, device, radius_scale: float = 1.0):
     """Boolean [H, W] mask of pixels inside the fisheye lens disk.
 
     ``intrinsics`` are (fx, fy, cx, cy, k1, k2, k3, k4) scaled to the given image
@@ -57,7 +60,40 @@ def geometric_valid_mask(intrinsics, height: int, width: int, device, radius_sca
     return theta_d < theta_d_max
 
 
-def build_fisheye_mask(cam, height: int, width: int, device, cfg) -> Optional[torch.Tensor]:
+def geometric_valid_mask_thin_prism_fisheye(intrinsics, height: int, width: int, device, radius_scale: float = 1.0):
+    """Boolean [H, W] mask of pixels inside the thin prism fisheye lens disk.
+
+    ``intrinsics`` are (fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1) scaled to the
+    given image resolution. The baseline (``radius_scale == 1.0``) keeps pixels whose
+    equidistant fisheye angle is below 90 deg, matching the ray-tracer cutoff.
+    """
+    fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1 = (float(v) for v in intrinsics)
+
+    ys = torch.arange(height, device=device, dtype=torch.float32) + 0.5
+    xs = torch.arange(width, device=device, dtype=torch.float32) + 0.5
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+
+    uu0 = (grid_x - cx) / fx
+    vv0 = (grid_y - cy) / fy
+    uu = uu0.clone()
+    vv = vv0.clone()
+
+    for _ in range(100):
+        r2 = uu * uu + vv * vv
+        radial = k1 * r2 + k2 * r2**2 + k3 * r2**3 + k4 * r2**4
+        du = uu * radial + 2.0 * p1 * uu * vv + p2 * (r2 + 2.0 * uu * uu) + sx1 * r2
+        dv = vv * radial + 2.0 * p2 * uu * vv + p1 * (r2 + 2.0 * vv * vv) + sy1 * r2
+        uu = uu0 - du
+        vv = vv0 - dv
+
+    theta = torch.sqrt(uu * uu + vv * vv)
+    max_theta = radius_scale * (math.pi / 2)
+    mask = theta < max_theta
+    mask = mask & (~torch.isnan(theta))
+    return mask
+
+
+def build_fisheye_mask(cam: CameraInfo, height: int, width: int, device, cfg) -> Optional[torch.Tensor]:
     """Build the shared radial fisheye validity mask as a [H, W] bool tensor.
 
     One mask suffices for every view when intrinsics and resolution are shared.
@@ -68,8 +104,16 @@ def build_fisheye_mask(cam, height: int, width: int, device, cfg) -> Optional[to
 
     if cam.intrinsics is None:
         raise ValueError(
-            "fisheye_mask_geometric requires OPENCV_FISHEYE intrinsics on the camera"
+            "fisheye_mask_geometric requires fisheye intrinsics on the camera"
         )
 
     intr = intrinsics_at_resolution(cam, height, width)
-    return geometric_valid_mask(intr, height, width, device, cfg.fisheye_mask_radius_scale)
+    from gray.camera_models import normalize_gray_model
+
+    model = normalize_gray_model(cam.model)
+    if model == "opencv_fisheye":
+        return geometric_valid_mask_opencv_fisheye(intr, height, width, device, cfg.fisheye_mask_radius_scale)
+    elif model == "thin_prism_fisheye":
+        return geometric_valid_mask_thin_prism_fisheye(intr, height, width, device, cfg.fisheye_mask_radius_scale)
+    else:
+        raise ValueError(f"Unsupported camera model: {cam.model}")

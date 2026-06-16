@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import os
 import numpy as np
 
+from gray.camera_models import gray_model_from_colmap, normalize_gray_model
+
 
 @dataclass
 class CameraInfo:
@@ -19,8 +21,8 @@ class CameraInfo:
     image_width: int
     image_height: int
     is_test: bool
-    model: str = "pinhole"  # * "pinhole" or "opencv_fisheye"
-    intrinsics: np.ndarray = None  # * fx, fy, cx, cy, k1, k2, k3, k4 scaled to image resolution (fisheye only)
+    model: str = "pinhole"  # * "pinhole" or "opencv_fisheye" or "thin_prism_fisheye"
+    intrinsics: np.ndarray = None  # * fisheye intrinsics scaled to image resolution (8 or 12 floats)
 
     @staticmethod
     def from_colmap(cfg, key, extr, intr, is_test: bool):
@@ -34,27 +36,33 @@ class CameraInfo:
         R = np.transpose(colmap.qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
         origin = -R @ T
-        model = "pinhole"
+        model = gray_model_from_colmap(intr.model)
         intrinsics = None
-        if intr.model == "SIMPLE_PINHOLE":
-            focal_length_x = intr.params[0]
-            fov_y = focal2fov(focal_length_x, height)
-            fov_x = focal2fov(focal_length_x, width)
-        elif intr.model == "PINHOLE":
-            focal_length_x = intr.params[0]
-            focal_length_y = intr.params[1]
-            fov_y = focal2fov(focal_length_y, height)
-            fov_x = focal2fov(focal_length_x, width)
+        if intr.model in ["SIMPLE_PINHOLE", "PINHOLE"]:
+            if intr.model == "SIMPLE_PINHOLE":
+                focal_length_x = intr.params[0]
+                fov_y = focal2fov(focal_length_x, height)
+                fov_x = focal2fov(focal_length_x, width)
+            else:
+                focal_length_x = intr.params[0]
+                focal_length_y = intr.params[1]
+                fov_y = focal2fov(focal_length_y, height)
+                fov_x = focal2fov(focal_length_x, width)
         elif intr.model == "OPENCV_FISHEYE":
-            model = "opencv_fisheye"
             fx, fy, cx, cy, k1, k2, k3, k4 = intr.params
             # * fov_* kept only for logging / dense-init helpers, not used for fisheye rays
             fov_y = focal2fov(fy, height)
             fov_x = focal2fov(fx, width)
             intrinsics = np.array([fx, fy, cx, cy, k1, k2, k3, k4], dtype=np.float64)
+        elif intr.model == "THIN_PRISM_FISHEYE":
+            fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1 = intr.params
+            fov_y = focal2fov(fy, height)
+            fov_x = focal2fov(fx, width)
+            intrinsics = np.array([fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1], dtype=np.float64)
         else:
             assert False, (
-                "Colmap camera model not handled: only PINHOLE, SIMPLE_PINHOLE and OPENCV_FISHEYE supported!"
+                "Colmap camera model not handled: only PINHOLE, SIMPLE_PINHOLE, "
+                "OPENCV_FISHEYE and THIN_PRISM_FISHEYE supported!"
             )
 
         if os.path.isabs(extr.name):
@@ -107,6 +115,8 @@ class CameraInfo:
                 kwargs[field] = np.array(value)
             else:
                 kwargs[field] = value
+        if kwargs.get("model") is not None:
+            kwargs["model"] = normalize_gray_model(kwargs["model"])
         return CameraInfo(**kwargs)
 
     def to_json(self):
@@ -142,11 +152,15 @@ class CameraInfo:
         return tensor
 
     def intrinsics_cuda(self):
-        """Returns the fisheye intrinsics (fx, fy, cx, cy, k1..k4) cached as a CUDA tensor"""
+        """Returns the fisheye intrinsics as a CUDA tensor, synced with ``self.intrinsics``."""
         import torch
 
+        intrinsics = np.asarray(self.intrinsics, dtype=np.float32)
+        cached_id = getattr(self, "_intrinsics_cache_id", None)
         tensor = getattr(self, "_intrinsics_cuda", None)
-        if tensor is None:
-            tensor = torch.from_numpy(np.asarray(self.intrinsics, dtype=np.float32)).cuda()
-            self._intrinsics_cuda = tensor
+        if cached_id is id(self.intrinsics) and tensor is not None and tensor.numel() == intrinsics.size:
+            return tensor
+        tensor = torch.from_numpy(intrinsics).cuda()
+        self._intrinsics_cuda = tensor
+        self._intrinsics_cache_id = id(self.intrinsics)
         return tensor

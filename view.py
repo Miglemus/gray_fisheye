@@ -5,7 +5,6 @@
 
 import os
 from threading import Lock
-from argparse import ArgumentParser
 from imgui_bundle import imgui_ctx, imgui
 from gray.camera import CameraInfo
 from viewer import Viewer
@@ -13,11 +12,10 @@ from viewer.types import ViewerMode
 from viewer.widgets.image import TorchImage
 from viewer.widgets.cameras.fps import FPSCamera
 from viewer.widgets.saved_views import SavedViews
-from viewer.widgets.monitor import PerformanceMonitor
 
 from dataclasses import dataclass
 import tyro
-from tyro.conf import subcommand, arg
+from tyro.conf import arg
 from typing import Annotated, List, Literal, Optional
 import json
 
@@ -199,7 +197,7 @@ class GaussianViewer(Viewer):
             render_time = start.elapsed_time(end)
 
     def show_gui(self):
-        with imgui_ctx.begin(f"Point View Settings"):
+        with imgui_ctx.begin("Point View Settings"):
             self._sync_active_colmap_view()
             _, render_mode_choice = imgui.list_box(
                 "Render Mode", self.render_modes.index(self.render_mode), self.render_modes

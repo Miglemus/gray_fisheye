@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from gray.fisheye_mask import build_fisheye_mask
 from gray.imports import *
 from gray.utils import *
+from gray.camera_models import GrayCameraModelClass, is_fisheye_gray_model
 from gray.config import Config
 from gray.camera import CameraInfo
 import gray.colmap as colmap
@@ -9,9 +11,11 @@ import gray.colmap as colmap
 from torchvision.io import read_image, ImageReadMode
 from concurrent.futures import ThreadPoolExecutor
 import torch
-import struct
 import json
 import copy
+from PIL import Image
+
+from run_colmap_fixed import CameraConfig
 
 executor = ThreadPoolExecutor()
 
@@ -62,6 +66,7 @@ def load_colmap_views(
     llffhold=8,
     load_images=True,
     build_halfres=False,
+    expected_camera_model: Optional[GrayCameraModelClass] = None,
 ) -> ColmapViews:
     path = cfg.source_path
     sparse_dir = os.path.join(path, sparse_subdir)
@@ -97,6 +102,14 @@ def load_colmap_views(
         )
         cam_infos_unsorted.append(cam_info)
     cam_infos = sorted(cam_infos_unsorted.copy(), key=lambda x: x.image_name)
+    if expected_camera_model is not None and cam_infos:
+        actual_model = GrayCameraModelClass(cam_infos[0].model)
+        expected_camera_model = expected_camera_model
+        if not actual_model == expected_camera_model:
+            raise ValueError(
+                f"Expected camera model '{expected_camera_model}' but COLMAP sparse "
+                f"reconstruction at '{sparse_dir}' uses '{actual_model}'"
+            )
     train_cam_infos = [c for c in cam_infos if not c.is_test]
     test_cam_infos = [c for c in cam_infos if c.is_test]
 
@@ -191,9 +204,10 @@ class SceneInfo:
             cfg,
             sparse_subdir=cfg.colmap_sparse_subdir,
             images_dir=cfg.images_dir,
-            apply_fisheye_mask=cfg.fisheye,
+            apply_fisheye_mask=GrayCameraModelClass(cfg.camera_model).is_fisheye(),
             llffhold=llffhold,
             build_halfres=True,
+            expected_camera_model=cfg.camera_model,
         )
         train_cam_infos = views.train_cameras
         test_cam_infos = views.test_cameras
@@ -254,7 +268,7 @@ class SceneInfo:
         )
 
     @staticmethod
-    def from_cameras_json(model_path: str, parse_images=True) -> SceneInfo:
+    def from_cameras_json(model_path: str, camera_model: CameraConfig=None, parse_images=True) -> SceneInfo:
         model_dir = os.path.dirname(model_path) if os.path.isfile(model_path) else model_path
         cameras_path = os.path.join(model_dir, "cameras.json")
         if not os.path.exists(cameras_path):
@@ -270,6 +284,38 @@ class SceneInfo:
         )
         train_cam_infos = [c for c in cam_infos if not c.is_test]
         test_cam_infos = [c for c in cam_infos if c.is_test]
+
+        if camera_model is None:
+            model = GrayCameraModelClass(cam_infos[0].model)
+        else:  # Apply the provided camera model to every view, not just the first one.
+            model = GrayCameraModelClass(camera_model.model)
+
+            for cam_info in cam_infos:
+                # If pinhole, this function is never called, so necessarily fisheye.
+                # Replace "images" with "input" for all cameras so the dataset path matches.
+                cam_info.image_path = cam_info.image_path.replace("images", "input")
+                cam_info.image_name = os.path.basename(cam_info.image_path)
+                with Image.open(cam_info.image_path) as image:
+                    cam_info.image_width, cam_info.image_height = image.size
+
+                cam_info.model = model
+                cam_info.intrinsics = camera_model.intrinsics
+
+        if model.is_fisheye():
+            single_cam_info = cam_infos[0]
+            valid_mask = build_fisheye_mask(
+                single_cam_info,
+                single_cam_info.image_height,
+                single_cam_info.image_width,
+                device="cpu",
+                cfg=Config(
+                    source_path=model_dir,
+                    model_path=model_dir,
+                    camera_model=model,
+                    fisheye_mask_geometric=True,
+                    fisheye_mask_radius_scale=0.95,
+                ),
+            )
 
         def load_images(cams):
             images = {}
@@ -290,6 +336,7 @@ class SceneInfo:
             test_images=load_images(test_cam_infos),
             pc_path=None,
             is_nerf_synthetic=False,
+            valid_mask=valid_mask if model.is_fisheye() else None,
         )
 
 

@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
-import tyro
 from tyro.conf import arg
-from typing import Annotated, List, Optional, Literal
+from typing import Annotated, List, Optional
+
+from gray.camera_models import GrayCameraModel, GrayCameraModelClass, is_fisheye_gray_model, normalize_gray_model
 
 
 @dataclass
@@ -16,11 +17,11 @@ class DatasetConfig:
     
     eval: bool = True  
 
-    fisheye: Annotated[bool, arg(aliases=["-f"])] = True  # * Train on raw fisheye images with OPENCV_FISHEYE rays
-    colmap_sparse_subdir: str = "sparse/0"  # * Overridden to the distorted reconstruction when fisheye=True
-    eval_modes: List[Literal["pinhole", "fisheye"]] = field(default_factory=lambda: ["fisheye"])
+    colmap_sparse_subdir: str = "sparse/0"  # * Overridden for fisheye camera models
+    eval_modes: List[GrayCameraModel] = field(default_factory=list)
 
-    # * Fisheye vignette masking (only applied when fisheye=True); ignores invalid pixels in loss and metrics
+    camera_model: Annotated[GrayCameraModel, arg(aliases=["-c"])] = "pinhole"
+    # * Fisheye vignette masking (only applied for fisheye camera models)
     fisheye_mask_geometric: bool = True  # * Mask pixels outside the lens disk (radial mask)
     # * Aggressivity of the radial mask: 1.0 == exact 90 deg disk (baseline); values < 1 shrink the
     # * valid radius to also cover the vignetted rim. Masked surface grows ~ (1 - radius_scale**2).
@@ -28,7 +29,7 @@ class DatasetConfig:
 
     def __post_init__(self):
         # * Fisheye uses the distorted COLMAP reconstruction and the raw (resized) images
-        if self.fisheye:
+        if is_fisheye_gray_model(self.camera_model):
             self.colmap_sparse_subdir = "distorted/sparse/0"
             if self.images_dir == "images_{downsampling}":
                 self.images_dir = "input_{downsampling}"
@@ -36,8 +37,6 @@ class DatasetConfig:
         self.images_dir = self.images_dir.format(
             downsampling=self.downsampling, source_path=self.source_path
         )
-        if self.fisheye:
-            self.images_dir = self.images_dir.replace("images_", "input_")
         self.point_cloud_file = self.point_cloud_file.format(
             downsampling=self.downsampling, source_path=self.source_path, images_dir=self.images_dir
         )
@@ -195,7 +194,7 @@ class Config(RaytracerConfig, DatasetConfig):
         DatasetConfig.__post_init__(self)
         RaytracerConfig.__post_init__(self)
 
-    def resolved_eval_modes(self) -> List[Literal["pinhole", "fisheye"]]:
+    def resolved_eval_modes(self) -> List[GrayCameraModelClass]:
         if self.eval_modes:
             return self.eval_modes
-        return ["fisheye"] if self.fisheye else ["pinhole"]
+        return [self.camera_model]

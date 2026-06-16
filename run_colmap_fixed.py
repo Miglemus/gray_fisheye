@@ -11,29 +11,21 @@ import pycolmap
 import tyro
 from tyro.conf import arg
 
+from gray.camera_models import (
+    CAMERA_PARAM_KEYS,
+    normalize_gray_model,
+    normalize_param_key,
+    param_key_to_colmap_model,
+)
 from gray.colmap import CAMERA_MODEL_NAMES, best_reconstruction_model
-
-# * COLMAP parameter order for each supported camera model.
-CAMERA_PARAM_KEYS = {
-    "SIMPLE_PINHOLE": ("f", "cx", "cy"),
-    "PINHOLE": ("fx", "fy", "cx", "cy"),
-    "SIMPLE_RADIAL": ("f", "cx", "cy", "k"),
-    "RADIAL": ("f", "cx", "cy", "k1", "k2"),
-    "OPENCV": ("fx", "fy", "cx", "cy", "k1", "k2", "p1", "p2"),
-    "OPENCV_FISHEYE": ("fx", "fy", "cx", "cy", "k1", "k2", "k3", "k4"),
-    "FULL_OPENCV": ("fx", "fy", "cx", "cy", "k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6"),
-    "FOV": ("fx", "fy", "cx", "cy", "omega"),
-    "SIMPLE_RADIAL_FISHEYE": ("f", "cx", "cy", "k"),
-    "RADIAL_FISHEYE": ("f", "cx", "cy", "k1", "k2"),
-    "THIN_PRISM_FISHEYE": ("fx", "fy", "cx", "cy", "k1", "k2", "k3", "k4", "p1", "p2", "sx1", "sy1"),
-}
 
 
 @dataclass
 class CameraConfig:
     model: str
-    params: List[float]
-
+    intrinsics: List[float]
+    width: int
+    height: int
 
 @dataclass
 class CLI:
@@ -55,10 +47,7 @@ def _resolve_model(data: dict, default_model: Optional[str]) -> str:
         raise ValueError(
             "Camera model required: set 'model' in params.json or pass --camera on the command line"
         )
-    if model not in CAMERA_MODEL_NAMES:
-        known = ", ".join(sorted(CAMERA_MODEL_NAMES))
-        raise ValueError(f"Unknown camera model '{model}'. Supported models: {known}")
-    return model
+    return normalize_param_key(model)
 
 
 def _params_from_dict(data: dict, model: str) -> List[float]:
@@ -73,12 +62,13 @@ def _params_from_dict(data: dict, model: str) -> List[float]:
 
 
 def _validate_params(model: str, params: List[float], path: Path) -> None:
-    expected = CAMERA_MODEL_NAMES[model].num_params
+    colmap_model = param_key_to_colmap_model(model)
+    expected = CAMERA_MODEL_NAMES[colmap_model].num_params
     if len(params) != expected:
         raise ValueError(
             f"{model} expects {expected} parameters, got {len(params)} in {path}"
         )
-    pycolmap.Camera(model=model, width=1, height=1, params=params)
+    pycolmap.Camera(model=colmap_model, width=1, height=1, params=params)
 
 
 def load_config(path: Path, default_model: Optional[str] = None) -> CameraConfig:
@@ -90,15 +80,21 @@ def load_config(path: Path, default_model: Optional[str] = None) -> CameraConfig
             raise ValueError(
                 f"params.json is a bare list; set 'model' in the json or pass --camera ({path})"
             )
+        model = normalize_param_key(model)
         params = [float(v) for v in data]
     elif isinstance(data, dict):
         model = _resolve_model(data, default_model)
         params = _params_from_dict(data, model)
+        width, height = int(data["width"]), int(data["height"])
     else:
         raise ValueError(f"Expected a JSON object or list in {path}")
 
     _validate_params(model, params, path)
-    return CameraConfig(model=model, params=params)
+    try:
+        gray_model = normalize_gray_model(model)
+    except ValueError:
+        gray_model = model
+    return CameraConfig(model=gray_model, intrinsics=params, width=width, height=height)
 
 
 def main():
@@ -109,12 +105,12 @@ def main():
     assert (src / "input").is_dir(), f"Input directory not found: {src / 'input'}"
     (src / "distorted" / "sparse").mkdir(parents=True, exist_ok=True)
 
-    params_str = ",".join(str(p) for p in camera.params)
+    params_str = ",".join(str(p) for p in camera.intrinsics)
     print(f"Using fixed {camera.model}: params={params_str}")
 
     device = pycolmap.Device.cuda if cli.gpu else pycolmap.Device.cpu
     reader_options = pycolmap.ImageReaderOptions(
-        camera_model=camera.model,
+        camera_model=param_key_to_colmap_model(camera.model),
         camera_params=params_str,
     )
 
