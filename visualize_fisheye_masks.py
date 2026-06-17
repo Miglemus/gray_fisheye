@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Annotated, Literal, Optional
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgb
 import numpy as np
 import tyro
 from tyro.conf import arg
@@ -28,12 +29,13 @@ MASK_FUNCS = {
 
 @dataclass
 class CLI:
-    source_path: Annotated[str, arg(aliases=["-s"])]
+    source_path: Annotated[str, arg(aliases=["-s"], help="Path to COLMAP reconstruction (sparse or distorted/sparse)")]
     downsampling: Annotated[int, arg(aliases=["-r"])] = 4
     camera_model: Literal["opencv_fisheye", "thin_prism_fisheye"] = "opencv_fisheye"
     image_name: Optional[str] = None  # * default: first training view
     output: Annotated[str, arg(aliases=["-o"])] = "fisheye_mask_preview.png"
     radius_scale: float = 0.95  # * aggressivity of the radial mask (1.0 == exact 90 deg)
+    mask_color: str = "red"  # * color used for masked-out pixels in the preview
 
 
 def _mask_to_rgb(mask) -> np.ndarray:
@@ -73,7 +75,8 @@ def main():
     scaled_mask = mask_fn(intr, height, width, image.device, radius_scale=cli.radius_scale)
 
     rgb = image.detach().cpu().permute(1, 2, 0).numpy()
-    masked_rgb = rgb * scaled_mask.cpu().numpy()[..., None]
+    masked_rgb = rgb.copy()
+    masked_rgb[~scaled_mask.cpu().numpy()] = np.asarray(to_rgb(cli.mask_color), dtype=np.float32)
 
     fig, axes = plt.subplots(1, 4, figsize=(20, 5))
     titles = [
