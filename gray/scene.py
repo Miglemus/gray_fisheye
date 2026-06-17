@@ -3,7 +3,7 @@ from __future__ import annotations
 from gray.fisheye_mask import build_fisheye_mask
 from gray.imports import *
 from gray.utils import *
-from gray.camera_models import GrayCameraModelClass, is_fisheye_gray_model
+from gray.camera_models import GrayCameraModelClass
 from gray.config import Config
 from gray.camera import CameraInfo
 import gray.colmap as colmap
@@ -295,18 +295,20 @@ class SceneInfo:
                 # Replace "images" with "input" for all cameras so the dataset path matches.
                 cam_info.image_path = cam_info.image_path.replace("images", "input")
                 cam_info.image_name = os.path.basename(cam_info.image_path)
-                with Image.open(cam_info.image_path) as image:
-                    cam_info.image_width, cam_info.image_height = image.size
+                cam_info.image_width, cam_info.image_height = camera_model.width, camera_model.height
 
                 cam_info.model = model
                 cam_info.intrinsics = camera_model.intrinsics
+
+            with Image.open(cam_infos[0].image_path) as image:
+                height, width = image.size[1], image.size[0]
 
         if model.is_fisheye():
             single_cam_info = cam_infos[0]
             valid_mask = build_fisheye_mask(
                 single_cam_info,
-                single_cam_info.image_height,
-                single_cam_info.image_width,
+                height,
+                width,
                 device="cpu",
                 cfg=Config(
                     source_path=model_dir,

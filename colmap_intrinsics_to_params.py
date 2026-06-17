@@ -1,9 +1,9 @@
 import tyro
 from tyro.conf import arg
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
 import gray.colmap as colmap
-from typing import Annotated, List, Optional
+from typing import Annotated
 from pathlib import Path
 from gray.camera_models import CAMERA_PARAM_KEYS, GrayCameraModelClass
 

@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
 from tyro.conf import arg
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Optional, Literal
 
-from gray.camera_models import GrayCameraModel, GrayCameraModelClass, is_fisheye_gray_model, normalize_gray_model
+from gray.camera_models import GrayCameraModel, GrayCameraModelClass, is_fisheye_gray_model
 
 
 @dataclass

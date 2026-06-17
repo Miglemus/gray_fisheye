@@ -11,7 +11,6 @@ from gray.eval import (
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from gray.camera_models import GrayCameraModelClass, CAMERA_PARAM_KEYS
-from run_colmap_fixed import load_config
 import os
 
 
@@ -75,7 +74,7 @@ else:
     save_path = os.path.join(cli.model_path, f"gaussians_{iteration:05d}.safetensors")
 
 # * Manage camera models
-# * we want to find the colmap camera model used during colmap
+# * we want to find the camera model used during colmap
 # * then validate if all eval modes are either colmap model or pinhole
 # * if not, make sure an intrinsics model is provided and use that for rendering
 colmap_model = GrayCameraModelClass(cfg.camera_model)
@@ -133,34 +132,13 @@ for camera_model in eval_modes:
         if views.valid_mask is not None:
             save_image(views.valid_mask.float()[None], os.path.join(dir_name, "valid_mask.png"))
 
-        if split == "train":
-            cameras = views.train_cameras
-            gt_images = (
-                load_eval_gt_images(cfg, camera_model, cameras)
-                if camera_model == intrinsics_model
-                else views.train_images
-            )
-        elif split == "test":
-            cameras = views.test_cameras
-            gt_images = (
-                load_eval_gt_images(cfg, camera_model, cameras)
-                if camera_model == intrinsics_model
-                else views.test_images
-            )
+        cameras = getattr(views, f"{split}_cameras")
+        gt_images = getattr(views, f"{split}_images")
 
         if cli.znear_list is not None and len(cli.znear_list) != len(cameras):
             raise ValueError(
                 f"Expected {len(cameras)} znear values for split '{split}', got {len(cli.znear_list)}"
             )
-
-        cam_intrinsics = None
-        if camera_config is not None and camera_model == intrinsics_model:
-            param_key = GrayCameraModelClass(camera_config.model)
-            params = list(camera_config.intrinsics)
-            for i, param in enumerate(CAMERA_PARAM_KEYS[param_key]):
-                if param in ["fx", "fy", "cx", "cy"]:
-                    params[i] /= int(cfg.downsampling)
-            cam_intrinsics = np.array(params, dtype=np.float64)
 
         futures = []
 
@@ -172,13 +150,10 @@ for camera_model in eval_modes:
             with torch.no_grad():
                 znear = cli.znear_list[i] if cli.znear_list is not None else cli.znear
                 raytracer.set_render_resolution(
-                    cli.width or cam.image_width,
-                    cli.height or cam.image_height,
+                    cli.width or gt_images[cam.image_name].shape[2] or cam.image_width,
+                    cli.height or gt_images[cam.image_name].shape[1] or cam.image_height,
                 )
                 
-                if cam_intrinsics is not None:
-                    cam.intrinsics = cam_intrinsics
-                    cam.model = camera_model
                 render = raytracer(cam, znear=znear).clamp(0, 1)
 
             futures.append(

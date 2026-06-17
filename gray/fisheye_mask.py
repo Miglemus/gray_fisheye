@@ -7,7 +7,6 @@ import numpy as np
 import torch
 
 from gray.camera import CameraInfo
-from run_colmap_fixed import CameraConfig
 
 
 # * Off-axis angle bounding the OpenCV fisheye imaged disk; pixels past this lie
