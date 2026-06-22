@@ -10,7 +10,7 @@ from gray.eval import (
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from gray.camera_models import GrayCameraModelClass, CAMERA_PARAM_KEYS
+from gray.camera_models import GrayCameraModelClass
 import os
 
 

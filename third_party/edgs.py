@@ -452,6 +452,9 @@ def extract_keypoints_and_colors(
     # New experimental version
     kptsA_x = np.round(kptsA_np[:, 0] / 1.0).astype(int)
     kptsA_y = np.round(kptsA_np[:, 1] / 1.0).astype(int)
+    # ! ai tells me the following line should be
+    # kptsA_color = imA[np.clip(kptsA_x, 0, H_A - 1), np.clip(kptsA_y, 0, W_A - 1)]
+
     kptsA_color = imA[np.clip(kptsA_x, 0, H - 1), np.clip(kptsA_y, 0, W - 1)]
 
     # Create a composite image from imB_compound
