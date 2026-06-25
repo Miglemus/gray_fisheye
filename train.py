@@ -2,6 +2,10 @@ import os
 import shutil
 from gray.config import *
 import json
+import tyro
+from tyro.conf import arg
+from typing import Annotated, Optional
+from dataclasses import dataclass
 
 
 @dataclass
@@ -32,6 +36,13 @@ if os.path.exists(cfg.model_path) and not cfg.yes:
 from gray.imports import *
 from gray.prelude import *
 from gray.memory import GpuMemoryMonitor
+from gray.eval import (
+    compute_view_metrics,
+    load_eval_views,
+    max_framebuffer_size,
+    scene_to_views,
+    validate_eval_modes,
+)
 from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
 from torch.utils.tensorboard import SummaryWriter
@@ -46,10 +57,20 @@ if scene.test_cameras:
     test_cam0 = scene.test_cameras[0]
     if cfg.preview_test_image_name:
         test_cam0 = {cam.image_name: cam for cam in scene.test_cameras}[cfg.preview_test_image_name]
+eval_modes = cfg.resolved_eval_modes()
+validate_eval_modes(eval_modes, cfg.camera_model)
+training_eval_mode = cfg.camera_model
+eval_views = {}
+for mode in eval_modes:
+    if mode == training_eval_mode:
+        eval_views[mode] = scene_to_views(scene)
+    else:
+        eval_views[mode] = load_eval_views(cfg, mode)
+max_width, max_height = max_framebuffer_size(scene, eval_views)
 
 # *** Init gaussians and raytracer
 raytracer = Raytracer.from_point_cloud(
-    cfg, scene.point_cloud, cam0.image_width, cam0.image_height
+    cfg, scene.point_cloud, max_width, max_height
 )
 if cfg.exposure_comp_enabled:
     raytracer.init_exposure_comp(scene.train_cameras)
@@ -76,7 +97,6 @@ with open(os.path.join(cfg.model_path, "preview_cameras.json"), "w") as f:
 
 # * Setup viewer
 if cfg.viewer:
-    from viewer.types import ViewerMode
     from view import GaussianViewer
 
     viewer = GaussianViewer(raytracer, scene.train_cameras, scene.test_cameras, training=True)
@@ -126,23 +146,27 @@ writer = SummaryWriter(log_dir=cfg.model_path)
 l1_avg = 0.0
 psnr_avg = 0.0
 last_psnr_avg = None
-losses_log = open(os.path.join(cfg.model_path, f"losses.csv"), "w")
+losses_log = open(os.path.join(cfg.model_path, "losses.csv"), "w")
 print("iteration l1 psnr", file=losses_log, flush=True)
-psnr_log = open(os.path.join(cfg.model_path, f"psnr.csv"), "w")
-print("iteration train test", file=psnr_log, flush=True)
-ssim_log = open(os.path.join(cfg.model_path, f"ssim.csv"), "w")
-print("iteration train test", file=ssim_log, flush=True)
-time_log = open(os.path.join(cfg.model_path, f"time.csv"), "w")
+psnr_logs = {}
+ssim_logs = {}
+for mode in eval_modes:
+    suffix = "" if len(eval_modes) == 1 else f"_{mode}"
+    psnr_logs[mode] = open(os.path.join(cfg.model_path, f"psnr{suffix}.csv"), "w")
+    print("iteration train test", file=psnr_logs[mode], flush=True)
+    ssim_logs[mode] = open(os.path.join(cfg.model_path, f"ssim{suffix}.csv"), "w")
+    print("iteration train test", file=ssim_logs[mode], flush=True)
+time_log = open(os.path.join(cfg.model_path, "time.csv"), "w")
 print("iteration elapsed_time", file=time_log, flush=True)
-num_gaussians_log = open(os.path.join(cfg.model_path, f"num_gaussians.csv"), "w")
+num_gaussians_log = open(os.path.join(cfg.model_path, "num_gaussians.csv"), "w")
 print("iteration num_gaussians", file=num_gaussians_log, flush=True)
-traversal_stats_log = open(os.path.join(cfg.model_path, f"traversal_stats.csv"), "w")
+traversal_stats_log = open(os.path.join(cfg.model_path, "traversal_stats.csv"), "w")
 print("iteration,num_hit_per_ray,num_accum_per_ray", file=traversal_stats_log, flush=True)
-geometry_stats_log = open(os.path.join(cfg.model_path, f"geometry_stats.csv"), "w")
+geometry_stats_log = open(os.path.join(cfg.model_path, "geometry_stats.csv"), "w")
 print("iteration,opacity,scale,anisotropy", file=geometry_stats_log, flush=True)
-preview_psnr_log = open(os.path.join(cfg.model_path, f"preview_psnr.csv"), "w")
+preview_psnr_log = open(os.path.join(cfg.model_path, "preview_psnr.csv"), "w")
 print("iteration train test", file=preview_psnr_log, flush=True)
-preview_ssim_log = open(os.path.join(cfg.model_path, f"preview_ssim.csv"), "w")
+preview_ssim_log = open(os.path.join(cfg.model_path, "preview_ssim.csv"), "w")
 print("iteration train test", file=preview_ssim_log, flush=True)
 executor = ThreadPoolExecutor()
 memory_monitor = GpuMemoryMonitor().start()
@@ -167,6 +191,7 @@ while iteration < cfg.iterations + 1:
                 )
 
             psnrs, ssims = [], []
+            mask = scene.valid_mask
 
             for label, cam, images_dict, track_psnr_name, track_ssim_name in views:
                 with torch.no_grad():
@@ -174,6 +199,8 @@ while iteration < cfg.iterations + 1:
                 preview_target = images_dict[cam.image_name]
 
                 preview_error = (preview_render - preview_target).abs()
+                if mask is not None:
+                    preview_error = preview_error * mask.unsqueeze(0)
                 if preview_error.amax() > 0:
                     preview_error = preview_error / preview_error.amax()
 
@@ -181,13 +208,16 @@ while iteration < cfg.iterations + 1:
                 preview_path = os.path.join(cfg.model_path, f"preview_{label}_{iteration:05d}.png")
                 executor.submit(save_image, preview, preview_path)
 
-                preview_psnr = psnr(preview_render[None], preview_target[None]).item()
+                if mask is not None:
+                    preview_psnr = masked_psnr(preview_render, preview_target, mask).item()
+                    preview_ssim = masked_ssim(preview_render, preview_target, mask).item()
+                else:
+                    preview_psnr = psnr(preview_render[None], preview_target[None]).item()
+                    preview_ssim = ssim(
+                        preview_render[None], preview_target[None], downsample=False
+                    ).item()
                 writer.add_scalar(track_psnr_name, preview_psnr, iteration)
                 psnrs.append(preview_psnr)
-
-                preview_ssim = ssim(
-                    preview_render[None], preview_target[None], downsample=False
-                ).item()
                 writer.add_scalar(track_ssim_name, preview_ssim, iteration)
                 ssims.append(preview_ssim)
 
@@ -209,6 +239,23 @@ while iteration < cfg.iterations + 1:
                 file=preview_ssim_log,
                 flush=True,
             )
+
+            # * Log the global vignetting parameters
+            if cfg.vignetting_comp:
+                vignetting_csv_path = os.path.join(cfg.model_path, f"vignetting_{iteration:05d}.csv")
+                with open(vignetting_csv_path, "w") as vignetting_log:
+                    column_names = []
+                    if cfg.vignetting_include_linear_term:
+                        column_names.append("coeff_r1")
+                    column_names.extend(
+                        f"coeff_r{2 * (term_idx + 1)}" for term_idx in range(cfg.vignetting_terms)
+                    )
+                    print(",".join(column_names + ["cx", "cy"]), file=vignetting_log)
+                    coefficients = raytracer.vignetting.coefficients.detach().cpu()
+                    principal_point = raytracer.vignetting.principal_point.detach().cpu()
+                    values = [str(value.item()) for value in coefficients]
+                    values += [str(principal_point[0].item()), str(principal_point[1].item())]
+                    print(",".join(values), file=vignetting_log)
 
         # * Acquire viewer lock
         if cfg.viewer:
@@ -236,14 +283,19 @@ while iteration < cfg.iterations + 1:
         if iteration <= cfg.half_res_iters:
             raytracer.set_render_resolution(cam0.image_width // 2, cam0.image_height // 2)
             images = scene.train_images_halfres
+            mask = scene.valid_mask_halfres
             batch_size = cfg.half_res_batch_size
         else:
             raytracer.set_render_resolution(cam0.image_width, cam0.image_height)
             images = scene.train_images
-            batch_size = 1
+            mask = scene.valid_mask
+            batch_size = cfg.batch_size
 
         # *** Forward pass
         batch = [camera_pool.pop() for _ in range(min(batch_size, len(camera_pool)))]
+        batch_size = len(batch)
+        batch_training_l1 = 0.0
+        batch_training_psnr = 0.0
         for camera in batch:
             render_unclamped = raytracer(camera)
             render = render_unclamped.clamp(0, 1)
@@ -252,15 +304,30 @@ while iteration < cfg.iterations + 1:
 
             # * Compute loss
             target = images[camera.image_name]
-            loss = F.l1_loss(render_unclamped, target)
+            if mask is not None:
+                loss = masked_l1(render_unclamped, target, mask)
+            else:
+                loss = F.l1_loss(render_unclamped, target)
             if cfg.lambda_ssim > 0.0:
                 from fused_ssim import fused_ssim
 
-                ssim_score = fused_ssim(render_unclamped[None], target[None])
+                if mask is not None:
+                    m = mask.unsqueeze(0)
+                    ssim_score = fused_ssim((render_unclamped * m)[None], (target * m)[None])
+                else:
+                    ssim_score = fused_ssim(render_unclamped[None], target[None])
                 loss = (1.0 - cfg.lambda_ssim) * loss + cfg.lambda_ssim * (1.0 - ssim_score)
 
             # *** Backward pass and optimization step
             raytracer.backward(loss / batch_size)
+
+            # * Accumulate batch-averaged training metrics
+            if mask is not None:
+                batch_training_l1 += masked_l1(render, target, mask).item() / batch_size
+                batch_training_psnr += masked_psnr(render, target, mask).item() / batch_size
+            else:
+                batch_training_l1 += F.l1_loss(render, target).item() / batch_size
+                batch_training_psnr += psnr(render[None], target[None]).item() / batch_size
         raytracer.step()
 
         # * Scale decay
@@ -287,10 +354,8 @@ while iteration < cfg.iterations + 1:
             raytracer.cuda_module.rebuild_bvh()
 
         # * Log training curve
-        training_l1 = F.l1_loss(render, target).item()
-        training_psnr = psnr(render[None], target[None]).item()
-        l1_avg += training_l1 / cfg.log_loss_interval
-        psnr_avg += training_psnr / cfg.log_loss_interval
+        l1_avg += batch_training_l1 / cfg.log_loss_interval
+        psnr_avg += batch_training_psnr / cfg.log_loss_interval
         if iteration % cfg.log_loss_interval == 0 or iteration == 1:
             print(
                 f"{iteration:05d} {l1_avg:.8f} {psnr_avg:.8f}",
@@ -346,46 +411,26 @@ while iteration < cfg.iterations + 1:
         # * Evaluate PSNR
         start_val = time.time()
         if iteration in cfg.test_iters:
-            raytracer.set_render_resolution(cam0.image_width, cam0.image_height)
-            print(f"{iteration:05d}", end="", file=psnr_log)
-            print(f"{iteration:05d}", end="", file=ssim_log)
-            scores = {}
-            for split, cams, images in [
-                ("train", scene.train_cameras, scene.train_images),
-                ("test", scene.test_cameras, scene.test_images),
-            ]:
-                if not cams:
-                    continue
-                with torch.no_grad():
-                    renders = [
-                        (raytracer(cam).clamp(0, 1).cpu()[None] * 255).floor() / 255 for cam in cams
-                    ]
-                gts = [images[cam.image_name].cpu()[None] for cam in cams]
-                renders = torch.cat(renders, dim=0)
-                gts = torch.cat(gts, dim=0)
-                psnr_split = mean(
-                    [
-                        psnr(renders[idx][None].cuda(), gts[idx][None].cuda()).item()
-                        for idx in range(len(cams))
-                    ]
-                )
-                ssim_split = mean(
-                    [
-                        ssim(
-                            renders[idx][None].cuda(), gts[idx][None].cuda(), downsample=False
-                        ).item()
-                        for idx in range(len(cams))
-                    ]
-                )
-                writer.add_scalar(f"psnr_eval_on_{split}", psnr_split, iteration)
-                writer.add_scalar(f"ssim_eval_on_{split}", ssim_split, iteration)
-                print(f" {psnr_split:02.2f}", end="", file=psnr_log)
-                print(f" {ssim_split:0.4f}", end="", file=ssim_log)
-                print(
-                    f"[ITER {iteration}] {split.capitalize()} PSNR {psnr_split:02.2f} SSIM {ssim_split:0.4f}"
-                )
-            print(file=psnr_log, flush=True)
-            print(file=ssim_log, flush=True)
+            for mode in eval_modes:
+                print(f"{iteration:05d}", end="", file=psnr_logs[mode])
+                print(f"{iteration:05d}", end="", file=ssim_logs[mode])
+                metrics = compute_view_metrics(raytracer, eval_views[mode])
+                for split in ["train", "test"]:
+                    if split not in metrics:
+                        continue
+                    psnr_split, ssim_split = metrics[split]
+                    writer.add_scalar(f"psnr_eval_{mode}_{split}", psnr_split, iteration)
+                    writer.add_scalar(f"ssim_eval_{mode}_{split}", ssim_split, iteration)
+                    if len(eval_modes) == 1:
+                        writer.add_scalar(f"psnr_eval_on_{split}", psnr_split, iteration)
+                        writer.add_scalar(f"ssim_eval_on_{split}", ssim_split, iteration)
+                    print(f" {psnr_split:02.2f}", end="", file=psnr_logs[mode])
+                    print(f" {ssim_split:0.4f}", end="", file=ssim_logs[mode])
+                    print(
+                        f"[ITER {iteration}] {mode} {split.capitalize()} PSNR {psnr_split:02.2f} SSIM {ssim_split:0.4f}"
+                    )
+                print(file=psnr_logs[mode], flush=True)
+                print(file=ssim_logs[mode], flush=True)
 
             # * Log elapsed time
             start += time.time() - start_val  # * remove time spent for evaluation

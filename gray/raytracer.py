@@ -4,6 +4,7 @@ from gray.camera import CameraInfo
 from gray.scene import SceneInfo, BasicPointCloud
 from gray.mlp import PreMLP, PostMLP
 from gray.exposure_comp import ExposureComp
+from gray.vignetting import Vignetting
 
 
 def _find_library_path():
@@ -107,6 +108,14 @@ class Raytracer(torch.nn.Module):
         if cfg.post_mlp:
             self.post_mlp = PostMLP(cfg, num_channels).cuda()
 
+        # * Setup global vignetting compensation (registered as a submodule so its
+        # * parameters are saved/restored with the safetensors state_dict)
+        if cfg.vignetting_comp:
+            self.vignetting = Vignetting(cfg)
+            if cfg.load_vignetting is not None and not inference_only:
+                self.vignetting.load_parameters(cfg.load_vignetting)
+                self.vignetting.set_lrs(0.0, 0.0)
+
         # * Last outputs, kept for backward pass
         self.output_channels = None
 
@@ -129,6 +138,24 @@ class Raytracer(torch.nn.Module):
         config = self.cuda_module.get_config()
         config.rays_from_python.fill_(False)
         camera.vertical_fov_radians.fill_(cam_info.fov_y)
+        from gray.camera_models import normalize_gray_model
+
+        model = normalize_gray_model(getattr(cam_info, "model", "pinhole"))
+        if model in ["opencv_fisheye", "thin_prism_fisheye"]:
+            # * Intrinsics are stored for the full image; rescale to the active render resolution
+            intrinsics = cam_info.intrinsics_cuda().clone()
+            scale_x = self.render_width / cam_info.image_width
+            scale_y = self.render_height / cam_info.image_height
+            intrinsics[0] *= scale_x  # fx
+            intrinsics[2] *= scale_x  # cx
+            intrinsics[1] *= scale_y  # fy
+            intrinsics[3] *= scale_y  # cy
+            if model == "opencv_fisheye":
+                camera.set_opencv_fisheye(intrinsics)
+            else:
+                camera.set_thin_prism_fisheye(intrinsics)
+        else:
+            camera.set_pinhole()
         camera.set_pose(cam_info.origin_cuda(), cam_info.rotation_c2w_blender_cuda())
 
         # * Set gaussian colors from view direction MLP
@@ -168,6 +195,10 @@ class Raytracer(torch.nn.Module):
         else:
             render = output_channels
 
+        # * Apply the global vignetting model (training, evaluation and inference renders)
+        if self.cfg.vignetting_comp:
+            render = self.vignetting(render)
+
         return render
 
     def backward(self, loss):
@@ -195,6 +226,8 @@ class Raytracer(torch.nn.Module):
             self.post_mlp.step()
         if self.cfg.exposure_comp_enabled:
             self.exposure_comp.step()
+        if self.cfg.vignetting_comp:
+            self.vignetting.step()
 
     def set_render_resolution(self, width: int, height: int):
         "Render at a reduced resolution (must not exceed the allocated framebuffer size)."

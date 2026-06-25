@@ -452,6 +452,9 @@ def extract_keypoints_and_colors(
     # New experimental version
     kptsA_x = np.round(kptsA_np[:, 0] / 1.0).astype(int)
     kptsA_y = np.round(kptsA_np[:, 1] / 1.0).astype(int)
+    # ! ai tells me the following line should be
+    # kptsA_color = imA[np.clip(kptsA_x, 0, H_A - 1), np.clip(kptsA_y, 0, W_A - 1)]
+
     kptsA_color = imA[np.clip(kptsA_x, 0, H - 1), np.clip(kptsA_y, 0, W - 1)]
 
     # Create a composite image from imB_compound
@@ -971,7 +974,10 @@ if __name__ == "__main__":
         if response not in ("y", "yes"):
             exit(0)
 
-    setattr(edgs_cli, "half_res_iters", 0) # This is added to avoir error caused by cli not having half_res_iters attribute
+    setattr(edgs_cli, "half_res_iters", 0)
+    setattr(edgs_cli, "colmap_sparse_subdir", "sparse/0")
+    setattr(edgs_cli, "fisheye", False)
+    setattr(edgs_cli, "camera_model", "pinhole")
     scene = SceneInfo.from_colmap(edgs_cli, parse_point_cloud=False)
 
     init_gaussians_with_corr(None, scene, edgs_cli, "cuda", verbose=False)

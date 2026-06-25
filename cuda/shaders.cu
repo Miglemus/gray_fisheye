@@ -84,7 +84,20 @@ extern "C" __global__ void __raygen__rg() {
                 ? params.framebuffer.ray_direction[pixel_id]
                 : params.camera.compute_primary_ray_direction(*params.config.jitter_primary_rays, idx, dim, seed);
         if (length(ray_direction) == 0.0f) {
-            return; // * Inactive pixel
+            // * Outside the fisheye disk (theta >= 90 deg): write background so stale
+            // * framebuffer data from a previous render cannot leak through.
+            params.framebuffer.output_channels[pixel_id] = *params.config.background_channels;
+            if (*params.metadata.grads_enabled) {
+                params.framebuffer.output_depth[pixel_id] = 0.0f;
+                params.framebuffer.transmittance[pixel_id] = 1.0f;
+                params.framebuffer.full_transmittance[pixel_id] = 1.0f;
+                params.framebuffer.remaining_channels_estimate[pixel_id] = make_floatK(0.0f);
+                params.framebuffer.ray_origin[pixel_id] = ray_origin;
+                params.framebuffer.ray_direction[pixel_id] = make_float3(0.0f, 0.0f, 0.0f);
+            } else if (*params.config.render_depth || *params.config.needs_ray_output) {
+                params.framebuffer.output_depth[pixel_id] = 0.0f;
+            }
+            return;
         }
 
         if (*params.config.render_ellipsoids) {

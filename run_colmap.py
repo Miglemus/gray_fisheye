@@ -1,21 +1,20 @@
 import logging
 import shutil
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import pycolmap
 import tyro
-from PIL import Image
-from tqdm import tqdm
 from tyro.conf import arg
+
+from gray.colmap import best_reconstruction_model
 
 
 @dataclass
 class CLI:
     source_path: Annotated[str, arg(aliases=["-s"])]
-    camera: str = "OPENCV"
+    camera: Literal["OPENCV", "OPENCV_FISHEYE", "THIN_PRISM_FISHEYE"] = "OPENCV"
     gpu: bool = True
     delete_input: bool = False
 
@@ -56,10 +55,15 @@ if not maps:
     logging.error("Incremental mapping failed. Exiting.")
     raise SystemExit(1)
 
+best_idx, rec = best_reconstruction_model(maps)
+if len(maps) > 1:
+    sizes = {i: r.num_reg_images() for i, r in maps.items()}
+    print(f"Multiple reconstructions {sizes}; using model {best_idx} ({rec.num_reg_images()} images)")
+
 # * Image undistortion
 pycolmap.undistort_images(
     output_path=src,
-    input_path=src / "distorted" / "sparse" / "0",
+    input_path=src / "distorted" / "sparse" / str(best_idx),
     image_path=src / "input",
     output_type="COLMAP",
 )

@@ -58,6 +58,11 @@ CAMERA_MODEL_NAMES = dict(
 )
 
 
+def best_reconstruction_model(maps):
+    """Return (model_index, reconstruction) with the most registered images."""
+    return max(maps.items(), key=lambda item: item[1].num_reg_images())
+
+
 def qvec2rotmat(qvec):
     return np.array(
         [
@@ -207,9 +212,7 @@ def read_intrinsics_text(path):
                 elems = line.split()
                 camera_id = int(elems[0])
                 model = elems[1]
-                assert model == "PINHOLE", (
-                    "While the loader support other types, the rest of the code assumes PINHOLE"
-                )
+
                 width = int(elems[2])
                 height = int(elems[3])
                 params = np.array(tuple(map(float, elems[4:])))

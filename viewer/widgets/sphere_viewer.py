@@ -7,7 +7,7 @@ from . import Widget
 from OpenGL.GL import *
 from ..types import Texture2D
 from OpenGL.GL.shaders import compileShader, compileProgram
-from imgui_bundle import imgui, imgui_ctx, ImVec2
+from imgui_bundle import imgui
 
 _vert_shader = """
 #version 330 core
@@ -188,7 +188,7 @@ class SphereViewer(Widget):
 
         # Bind the VAO and draw the points
         glBindVertexArray(self._vao)
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_BYTE, self._indices);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_BYTE, self._indices)
         glBindVertexArray(0)
 
         # Unbind program and FBO
