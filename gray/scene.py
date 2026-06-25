@@ -114,12 +114,22 @@ def load_colmap_views(
     test_cam_infos = [c for c in cam_infos if c.is_test]
 
     def load_image(cam):
+        if not os.path.exists(cam.image_path):
+            return cam.image_name, None
         image = read_image(cam.image_path, ImageReadMode.RGB).cuda() / 255
         return cam.image_name, image
 
     if load_images:
-        train_images = dict(executor.map(load_image, train_cam_infos))
-        test_images = dict(executor.map(load_image, test_cam_infos))
+        train_images = {
+            name: image
+            for name, image in executor.map(load_image, train_cam_infos)
+            if image is not None
+        }
+        test_images = {
+            name: image
+            for name, image in executor.map(load_image, test_cam_infos)
+            if image is not None
+        }
     else:
         train_images = {}
         test_images = {}
@@ -138,9 +148,15 @@ def load_colmap_views(
 
         ref_cam = train_cam_infos[0] if train_cam_infos else test_cam_infos[0]
         if load_images:
-            ref_image = train_images[ref_cam.image_name] if train_cam_infos else test_images[ref_cam.image_name]
-            height, width = ref_image.shape[-2], ref_image.shape[-1]
-            device = ref_image.device
+            ref_image = train_images.get(ref_cam.image_name)
+            if ref_image is None:
+                ref_image = test_images.get(ref_cam.image_name)
+            if ref_image is not None:
+                height, width = ref_image.shape[-2], ref_image.shape[-1]
+                device = ref_image.device
+            else:
+                height, width = ref_cam.image_height, ref_cam.image_width
+                device = "cpu"
         else:
             height, width = ref_cam.image_height, ref_cam.image_width
             device = "cpu"
@@ -268,7 +284,12 @@ class SceneInfo:
         )
 
     @staticmethod
-    def from_cameras_json(model_path: str, camera_model: CameraConfig=None, parse_images=True) -> SceneInfo:
+    def from_cameras_json(
+        model_path: str,
+        camera_model: CameraConfig = None,
+        parse_images=True,
+        cfg: Optional[Config] = None,
+    ) -> SceneInfo:
         model_dir = os.path.dirname(model_path) if os.path.isfile(model_path) else model_path
         cameras_path = os.path.join(model_dir, "cameras.json")
         if not os.path.exists(cameras_path):
@@ -282,8 +303,16 @@ class SceneInfo:
             (CameraInfo.from_json(entry) for entry in payload),
             key=lambda x: x.image_name,
         )
+        if not cam_infos:
+            raise ValueError(f"No cameras found in '{cameras_path}'")
         train_cam_infos = [c for c in cam_infos if not c.is_test]
         test_cam_infos = [c for c in cam_infos if c.is_test]
+
+        valid_mask = None
+        width, height = cam_infos[0].image_width, cam_infos[0].image_height
+        if os.path.exists(cam_infos[0].image_path):
+            with Image.open(cam_infos[0].image_path) as image:
+                width, height = image.size
 
         if camera_model is None:
             model = GrayCameraModelClass(cam_infos[0].model)
@@ -291,32 +320,50 @@ class SceneInfo:
             model = GrayCameraModelClass(camera_model.model)
 
             for cam_info in cam_infos:
-                # If pinhole, this function is never called, so necessarily fisheye.
-                # Replace "images" with "input" for all cameras so the dataset path matches.
-                cam_info.image_path = cam_info.image_path.replace("images", "input")
+                if model.is_fisheye():
+                    # Fisheye GT lives in input_* while stored pinhole cameras use images_*.
+                    cam_info.image_path = cam_info.image_path.replace("images", "input")
                 cam_info.image_name = os.path.basename(cam_info.image_path)
-                cam_info.image_width, cam_info.image_height = camera_model.width, camera_model.height
+                cam_info.model = model.name
+                scale_x = cam_info.image_width / camera_model.width
+                scale_y = cam_info.image_height / camera_model.height
+                intrinsics = np.array(camera_model.intrinsics, dtype=np.float64).copy()
+                if model.is_fisheye():
+                    intrinsics[0] *= scale_x
+                    intrinsics[1] *= scale_y
+                    intrinsics[2] *= scale_x
+                    intrinsics[3] *= scale_y
+                    cam_info.intrinsics = intrinsics
+                else:
+                    if len(intrinsics) == 3:  # SIMPLE_PINHOLE: f, cx, cy
+                        fx = intrinsics[0] * scale_x
+                        fy = intrinsics[0] * scale_y
+                    else:
+                        fx = intrinsics[0] * scale_x
+                        fy = intrinsics[1] * scale_y
+                    cam_info.fov_x = focal2fov(fx, cam_info.image_width)
+                    cam_info.fov_y = focal2fov(fy, cam_info.image_height)
+                    cam_info.intrinsics = None
 
-                cam_info.model = model
-                cam_info.intrinsics = camera_model.intrinsics
-
-            with Image.open(cam_infos[0].image_path) as image:
-                height, width = image.size[1], image.size[0]
+            width, height = cam_infos[0].image_width, cam_infos[0].image_height
+            if os.path.exists(cam_infos[0].image_path):
+                with Image.open(cam_infos[0].image_path) as image:
+                    width, height = image.size
 
         if model.is_fisheye():
             single_cam_info = cam_infos[0]
+            mask_cfg = cfg or Config(
+                source_path=model_dir,
+                model_path=model_dir,
+                camera_model=model,
+                fisheye_mask_geometric=True,
+            )
             valid_mask = build_fisheye_mask(
                 single_cam_info,
                 height,
                 width,
                 device="cpu",
-                cfg=Config(
-                    source_path=model_dir,
-                    model_path=model_dir,
-                    camera_model=model,
-                    fisheye_mask_geometric=True,
-                    fisheye_mask_radius_scale=0.95,
-                ),
+                cfg=mask_cfg,
             )
 
         def load_images(cams):

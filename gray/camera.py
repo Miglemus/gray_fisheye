@@ -77,8 +77,11 @@ class CameraInfo:
             image_path = base + ".png"
             image_name = os.path.splitext(image_name)[0] + ".png"
 
-        with Image.open(image_path) as image:
-            image_width, image_height = image.size
+        if os.path.exists(image_path):
+            with Image.open(image_path) as image:
+                image_width, image_height = image.size
+        else:
+            image_width, image_height = width, height
 
         # * Rescale fisheye intrinsics from the COLMAP resolution to the loaded image resolution
         if intrinsics is not None:

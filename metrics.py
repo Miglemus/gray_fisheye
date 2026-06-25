@@ -17,7 +17,9 @@ class ImagePairDataset(Dataset):
     def __init__(self, renders_dir: Path, gt_dir: Path):
         self.renders_dir = renders_dir
         self.gt_dir = gt_dir
-        self.fnames = sorted(os.listdir(renders_dir))
+        self.fnames = sorted(
+            fname for fname in os.listdir(renders_dir) if (gt_dir / fname).exists()
+        )
 
     def __len__(self):
         return len(self.fnames)
@@ -33,11 +35,11 @@ def discover_metric_dirs(method_dir: Path):
     mode_dirs = [
         (entry.name, entry)
         for entry in sorted(method_dir.iterdir())
-        if entry.is_dir() and (entry / "renders").exists() and (entry / "gt").exists()
+        if entry.is_dir() and (entry / "renders").exists()
     ]
     if mode_dirs:
         return mode_dirs
-    if (method_dir / "renders").exists() and (method_dir / "gt").exists():
+    if (method_dir / "renders").exists():
         return [(None, method_dir)]
     return []
 
@@ -76,7 +78,13 @@ if __name__ == "__main__":
             for mode, mode_dir in metric_dirs:
                 if mode is not None:
                     print("Mode:", mode)
+                if not (mode_dir / "gt").exists():
+                    print("  Skipping metrics: no gt folder found")
+                    continue
                 dataset = ImagePairDataset(mode_dir / "renders", mode_dir / "gt")
+                if len(dataset) == 0:
+                    print("  Skipping metrics: no matching render/gt image pairs found")
+                    continue
                 loader = DataLoader(dataset, batch_size=cli.batch_size, num_workers=4, pin_memory=True)
                 valid_mask = load_mask(mode_dir)
 

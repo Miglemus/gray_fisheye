@@ -25,6 +25,8 @@ class CameraConfig:
     width: int
     height: int
 
+    def from_colmap_camera(camera: colmap.Camera) -> CameraConfig:
+        return CameraConfig(model=camera.model, intrinsics=camera.params, width=camera.width, height=camera.height)
 
 def load_config(path: Path, default_model: Optional[str] = None) -> CameraConfig:
     data = json.loads(path.read_text())
@@ -87,8 +89,8 @@ def normalize_intrinsics_file(intrinsics_path: os.PathLike) -> CameraConfig:
     if intrinsics_path.suffix == ".json":
         return load_config(intrinsics_path)
     elif intrinsics_path.suffix == ".bin":
-        return colmap.read_intrinsics_binary(intrinsics_path)
+        return CameraConfig.from_colmap_camera(list(colmap.read_intrinsics_binary(intrinsics_path).values())[0])
     elif intrinsics_path.suffix == ".txt":
-        return colmap.read_intrinsics_text(intrinsics_path)
+        return CameraConfig.from_colmap_camera(list(colmap.read_intrinsics_text(intrinsics_path).values())[0])
     else:
         raise ValueError(f"Unsupported intrinsics file format: {intrinsics_path}")
