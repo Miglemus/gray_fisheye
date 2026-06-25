@@ -17,15 +17,10 @@ from gray.camera_models import (
     normalize_param_key,
     param_key_to_colmap_model,
 )
+from gray.camera_config import CameraConfig, normalize_intrinsics_file
 from gray.colmap import CAMERA_MODEL_NAMES, best_reconstruction_model
 
 
-@dataclass
-class CameraConfig:
-    model: str
-    intrinsics: List[float]
-    width: int
-    height: int
 
 @dataclass
 class CLI:
@@ -100,7 +95,7 @@ def load_config(path: Path, default_model: Optional[str] = None) -> CameraConfig
 def main():
     cli = tyro.cli(CLI)
     config_path = Path(cli.config_path or Path(cli.source_path) / "params.json")
-    camera = load_config(config_path, default_model=cli.camera)
+    camera = normalize_intrinsics_file(config_path)
     src = Path(cli.source_path)
     assert (src / "input").is_dir(), f"Input directory not found: {src / 'input'}"
     (src / "distorted" / "sparse").mkdir(parents=True, exist_ok=True)
@@ -165,7 +160,7 @@ def main():
             continue
         shutil.move(str(f), str(src / "sparse" / "0" / f.name))
 
-    print(f"Done. Distorted sparse: {src / 'distorted' / 'sparse' / best_idx}")
+    print(f"Done. Distorted sparse: {src / 'distorted' / 'sparse' / str(best_idx)}")
     print(f"Undistorted sparse: {src / 'sparse' / '0'}")
 
 

@@ -15,7 +15,7 @@ import json
 import copy
 from PIL import Image
 
-from run_colmap_fixed import CameraConfig
+from gray.camera_config import CameraConfig
 
 executor = ThreadPoolExecutor()
 

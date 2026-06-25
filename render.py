@@ -2,7 +2,6 @@ from gray.imports import *
 from gray.prelude import *
 from gray.eval import (
     load_eval_views,
-    load_eval_gt_images,
     normalize_intrinsics_file,
     scene_to_views,
     validate_eval_modes,

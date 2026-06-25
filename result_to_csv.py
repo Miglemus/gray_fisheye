@@ -17,10 +17,6 @@ if __name__ == "__main__":
     with open(cli.json_path, "r") as f:
         data = json.load(f)
 
-    # print in format:
-    # train \ eval          | pinole | thin_prism_fisheye
-    # thin_prism_fisheye
-
     possible_train_models = set(["thin_prism_fisheye", "opencv_fisheye"])
 
     inner_dict = data["15000"]
