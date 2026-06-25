@@ -135,6 +135,69 @@ GPU support is only for Linux; on Windows you can either install the CPU-only ve
 
 Once COLMAP has run successfully, you will need to resize the images and run dense initialization as explained earlier. 
 
+For fisheye captures, pass `--camera OPENCV_FISHEYE` or `--camera THIN_PRISM_FISHEYE` to `run_colmap.py`. If you already know the intrinsics, use `run_colmap_fixed.py` with a `params.json` file under the scene directory (see the fisheye section below).
+
+### Fisheye Camera Models
+GRay supports ray-traced rendering for fisheye cameras in addition to the default pinhole model. Three camera models are available: `pinhole` (default), `opencv_fisheye`, and `thin_prism_fisheye`. Fisheye training and evaluation use the distorted COLMAP reconstruction (`distorted/sparse/0`) and resized raw images (`input_{downsampling}`) rather than the undistorted pinhole outputs.
+
+#### Scene layout
+Place your raw fisheye images under `data/$SCENE/input/`. After COLMAP, the scene should contain both `distorted/sparse/0/` (fisheye reconstruction) and `sparse/0/` (undistorted pinhole reconstruction produced by COLMAP's image undistortion step).
+
+#### COLMAP
+Run feature extraction and mapping with a fisheye camera model:
+```bash
+SCENE_DIR=data/my_fisheye_scene
+
+python run_colmap.py -s $SCENE_DIR --camera OPENCV_FISHEYE
+# or: --camera THIN_PRISM_FISHEYE
+```
+
+If the intrinsics are known in advance, provide them in `params.json` (or cameras.txt/cameras.bin directly in colmap format) and run mapping with fixed intrinsics instead:
+```bash
+python run_colmap_fixed.py -s $SCENE_DIR -c data/$SCENE/params.json
+```
+
+Resize both the raw fisheye images and the undistorted pinhole images:
+```bash
+python resize.py -s $SCENE_DIR -i input -y   # fisheye images -> input_1, input_2, ...
+python resize.py -s $SCENE_DIR -y              # pinhole images -> images_1, images_2, ...
+python third_party/edgs.py -s $SCENE_DIR -r 1 --roma_model indoors
+```
+
+#### Training and evaluation
+Train with the fisheye camera model and optional vignetting compensation:
+```bash
+OUTPUT_DIR=out/my_fisheye_opencv
+
+python train.py -s $SCENE_DIR -r 1 -m $OUTPUT_DIR \
+    --camera_model opencv_fisheye \
+    --batch_size 2 --eval --vignetting_comp --vignetting_terms 3 -y
+```
+
+Render and evaluate in multiple camera models (e.g. the training fisheye model plus a pinhole view of the same scene):
+```bash
+python render.py -m $OUTPUT_DIR \
+    --eval-models pinhole opencv_fisheye \
+    --intrinsics "$SCENE_DIR/distorted/sparse/0/cameras.bin"
+python metrics.py -m $OUTPUT_DIR
+python result_to_csv.py -t "$OUTPUT_DIR/results.json"
+```
+
+Renders are saved under `test/<iteration>/<camera_model>/` (for example, `test/15000/opencv_fisheye/renders/`). When multiple evaluation modes are used, `metrics.py` writes per-mode results to `results_<camera_model>.json` in addition to the combined `results.json`.
+
+During fisheye training and evaluation, pixels outside the lens disk are masked using a geometric radial mask (`--fisheye_mask_geometric`, on by default). PSNR and SSIM are computed on the masked region only; tune the mask with `--fisheye_mask_radius_scale` (default `0.95`). Preview a mask with:
+```bash
+python visualize_fisheye_masks.py -s $SCENE_DIR -r 1 --camera_model opencv_fisheye
+```
+
+For batch processing of several fisheye scenes with both camera models, see `run_batch.sh`.
+
+#### Utility scripts
+- `visualize_fisheye_masks.py`: preview the geometric fisheye valid-pixel mask.
+- `result_to_csv.py`: summarize cross-model PSNR from `results.json`.
+
+Note: in `train.py`, `-c` loads a quality preset JSON file (see below). Select the camera model with `--camera_model`, not `-c`.
+
 ### Memory Use
 We use per-pixel linked lists to store intersected Gaussians and data for the backward pass. You can control their size with the flags `--ppll_forward_size` and `--ppll_backward_size`. You might need to increase the defaults for your own scenes, or you might be able to reduce them. Running the standard scenes with the current settings requires 24GB of VRAM.
 
@@ -150,7 +213,7 @@ and data is provided to the CUDA module by modifying its values in-place.
 Note that the backward pass relies on the data from the forward pass staying unmodified (camera, framebuffer, etc.).
 
 ### Quality Presets
-Preset configurations are available: adding the flag `-c configs/lq.json` selects a lower level of quality, and the flag `-c configs/hq.json` selects a high level of quality. The default quality level is `mq` (medium quality). The hyperparameters used are detailed in the paper.
+Preset configurations are available: adding the flag `-c configs/lq.json` to `train.py` selects a lower level of quality, and the flag `-c configs/hq.json` selects a high level of quality. The default quality level is `mq` (medium quality). The hyperparameters used are detailed in the paper. Camera model selection is separate: use `--camera_model pinhole` (default), `opencv_fisheye`, or `thin_prism_fisheye`.
 
 ### Compatibility with 3DGS and 3DGRT
 The gaussians produced by this method are incompatible with 3DGS; in theory, the differences (different kernel, different sorting, and perspective accuracy) could be resolved by modifying both methods (refer to the paper for a short discussion on page 14), but this has not been done in practice. Rendering differences with 3DGRT are minute (hybrid transaprency).
@@ -164,7 +227,7 @@ Implementation-wise, the file format was changed to `.safetensors` which is simp
 
 
 ### Evaluation
-Metric computation was moved to the [PIQ](https://github.com/photosynthesis-team/piq) library since the LPIPS metric was incorrect in the original 3DGS codebase. PSNRs and SSIM scores were verified to match.
+Metric computation was moved to the [PIQ](https://github.com/photosynthesis-team/piq) library since the LPIPS metric was incorrect in the original 3DGS codebase. PSNRs and SSIM scores were verified to match. For fisheye renders, PSNR and SSIM are computed on the geometric valid-pixel mask saved alongside the renders; LPIPS is still computed on the full image.
 
 ### MLP Support
 This codebase also features MLP support, although we did not use MLPs in the paper.
@@ -211,7 +274,7 @@ Please report any problems you encounter with installation in the GitHub issues.
 
 If your scene is very large, you might get better results by disabling initialization binning with `--no_init_binning`.
 
-This code was designed for scenes with around 200-300 images and pinhole cameras; we are working on support for larger scenes. Alternative camera models are not currently provided but should be straightforward to implement.
+This code was designed for scenes with around 200-300 images; we are working on support for larger scenes. Pinhole cameras are the default; fisheye support (`opencv_fisheye` and `thin_prism_fisheye`) is also available (see above).
 
 You will likely encounter floaters which are a known limitation of dense initialization.
 
