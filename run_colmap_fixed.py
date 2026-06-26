@@ -29,10 +29,6 @@ class CLI:
         Optional[str],
         arg(aliases=["-c"], help="JSON file with camera parameters; defaults to <source>/params.json"),
     ] = None
-    camera: Annotated[
-        Optional[str],
-        arg(help="Camera model fallback when params.json does not specify one"),
-    ] = None
     gpu: bool = True
 
 
