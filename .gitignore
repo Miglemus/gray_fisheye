@@ -41,3 +41,6 @@ debug.py
 attorch.py
 *preview*
 .devcontainer
+temporary_image_size_checker.py
+.gitignore
+AGENT.md
