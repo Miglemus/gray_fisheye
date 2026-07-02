@@ -78,6 +78,7 @@ for i, cam in enumerate(cameras):
     else:
         with torch.no_grad():
             raytracer(cam, skip_copy=True)
+
 end.record()
 torch.cuda.synchronize()
 secs = start.elapsed_time(end) / 1000.0
