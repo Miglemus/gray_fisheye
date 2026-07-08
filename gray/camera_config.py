@@ -42,7 +42,7 @@ def load_config(path: Path, default_model: Optional[str] = None) -> CameraConfig
     elif isinstance(data, dict):
         model = _resolve_model(data, default_model)
         params = _params_from_dict(data, model)
-        width, height = int(data["width"]), int(data["height"])
+        width, height = int(data.get("width", 1)), int(data.get("height", 1))
     else:
         raise ValueError(f"Expected a JSON object or list in {path}")
 

@@ -44,3 +44,4 @@ attorch.py
 temporary_image_size_checker.py
 .gitignore
 AGENT.md
+.agents/

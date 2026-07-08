@@ -4,6 +4,7 @@
 #include "../utils/random.h"
 #include "../utils/vec_math.h"
 #include "opencv_fisheye.cuh"
+#include "rtpf.cuh"
 #include "tpf.cuh"
 #endif
 
@@ -11,6 +12,7 @@
 #define CAMERA_MODEL_PINHOLE 0
 #define CAMERA_MODEL_OPENCV_FISHEYE 1
 #define CAMERA_MODEL_THIN_PRISM_FISHEYE 2
+#define CAMERA_MODEL_RAD_TAN_THIN_PRISM_FISHEYE 3
 
 struct Camera {
     const float3 *origin;
@@ -20,8 +22,8 @@ struct Camera {
     const float *znear;
     const float *zfar;
 
-    const int *model_id;          // * CAMERA_MODEL_* selector
-    const float *fisheye_params;  // * up to 12 floats: fx, fy, cx, cy, k1..k4 [, p1, p2, sx1, sy1]
+    const int *model_id;         // * CAMERA_MODEL_* selector
+    const float *fisheye_params; // * up to 16 floats, depending on the selected fisheye model
 
 #ifdef __CUDACC__
     __device__ float3 compute_primary_ray_direction(const bool jitter, const uint3 idx, const uint3 dim,
@@ -53,6 +55,16 @@ struct Camera {
             float3 cam_dir = make_float3(tpf.x, -tpf.y, -tpf.z);
             return normalize(rotation_w2c[0] * cam_dir.x + rotation_w2c[1] * cam_dir.y +
                              rotation_w2c[2] * cam_dir.z);
+        } else if (*model_id == CAMERA_MODEL_RAD_TAN_THIN_PRISM_FISHEYE) {
+            // * Unproject pixel to a unit bearing in the RadTan Thin Prism Fisheye camera frame.
+            float3 rtpf = rad_tan_thin_prism_fisheye_unproject(fisheye_params, idxf.x + 0.5f, idxf.y + 0.5f);
+            if (rtpf.x == 0.0f && rtpf.y == 0.0f && rtpf.z == 0.0f) {
+                return make_float3(0.0f, 0.0f, 0.0f); // * Inactive pixel (outside the fisheye FOV)
+            }
+            // * Convert to GRay's camera frame (x right, y up, z back) then rotate to world
+            float3 cam_dir = make_float3(rtpf.x, -rtpf.y, -rtpf.z);
+            return normalize(rotation_w2c[0] * cam_dir.x + rotation_w2c[1] * cam_dir.y +
+                             rotation_w2c[2] * cam_dir.z);
         }
 
         // * Pinhole: NDC image-plane coordinates (x right, y up, forward = -z)
@@ -78,8 +90,8 @@ struct CameraDataHolder : torch::CustomClassHolder {
     Tensor znear = torch::zeros({1}, CUDA_FLOAT32);
     Tensor zfar = torch::zeros({1}, CUDA_FLOAT32);
 
-    Tensor model_id = torch::zeros({1}, CUDA_INT32);        // * defaults to CAMERA_MODEL_PINHOLE
-    Tensor fisheye_params = torch::zeros({12}, CUDA_FLOAT32); // * fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1
+    Tensor model_id = torch::zeros({1}, CUDA_INT32);          // * defaults to CAMERA_MODEL_PINHOLE
+    Tensor fisheye_params = torch::zeros({16}, CUDA_FLOAT32); // * max supported fisheye parameter count
 
     Camera reify() {
         return Camera{
@@ -113,7 +125,13 @@ struct CameraDataHolder : torch::CustomClassHolder {
     void set_thin_prism_fisheye(const Tensor &params) {
         TORCH_CHECK(params.numel() == 12, "thin prism fisheye params must have 12 elements (fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1)");
         model_id.fill_(CAMERA_MODEL_THIN_PRISM_FISHEYE);
-        fisheye_params.copy_(params.reshape({12}));
+        fisheye_params.slice(0, 0, 12).copy_(params.reshape({12}));
+    }
+
+    void set_rad_tan_thin_prism_fisheye(const Tensor &params) {
+        TORCH_CHECK(params.numel() == 16, "rad tan thin prism fisheye params must have 16 elements (fx, fy, cx, cy, k0, k1, k2, k3, k4, k5, p0, p1, s0, s1, s2, s3)");
+        model_id.fill_(CAMERA_MODEL_RAD_TAN_THIN_PRISM_FISHEYE);
+        fisheye_params.copy_(params.reshape({16}));
     }
 
     static void bind(torch::Library &m) {
@@ -122,6 +140,7 @@ struct CameraDataHolder : torch::CustomClassHolder {
             .def("set_pinhole", &CameraDataHolder::set_pinhole)
             .def("set_opencv_fisheye", &CameraDataHolder::set_opencv_fisheye)
             .def("set_thin_prism_fisheye", &CameraDataHolder::set_thin_prism_fisheye)
+            .def("set_rad_tan_thin_prism_fisheye", &CameraDataHolder::set_rad_tan_thin_prism_fisheye)
             .def_readonly("vertical_fov_radians", &CameraDataHolder::vertical_fov_radians)
             .def_readonly("znear", &CameraDataHolder::znear)
             .def_readonly("zfar", &CameraDataHolder::zfar);

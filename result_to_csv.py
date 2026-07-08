@@ -17,7 +17,7 @@ if __name__ == "__main__":
     with open(cli.json_path, "r") as f:
         data = json.load(f)
 
-    possible_train_models = set(["thin_prism_fisheye", "opencv_fisheye"])
+    possible_train_models = set(["thin_prism_fisheye", "opencv_fisheye", "rad_tan_thin_prism_fisheye"])
 
     inner_dict = data["15000"]
     eval_models = set(inner_dict.keys())

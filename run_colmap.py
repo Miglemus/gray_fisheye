@@ -14,7 +14,7 @@ from gray.colmap import best_reconstruction_model
 @dataclass
 class CLI:
     source_path: Annotated[str, arg(aliases=["-s"])]
-    camera: Literal["OPENCV", "OPENCV_FISHEYE", "THIN_PRISM_FISHEYE"] = "OPENCV"
+    camera: Literal["OPENCV", "OPENCV_FISHEYE", "THIN_PRISM_FISHEYE", "RAD_TAN_THIN_PRISM_FISHEYE"] = "OPENCV"
     gpu: bool = True
     delete_input: bool = False
 

@@ -1,6 +1,6 @@
 import numpy as np
 
-from gray.fisheye_mask import geometric_valid_mask_opencv_fisheye
+from gray.fisheye_mask import geometric_valid_mask_opencv_fisheye, geometric_valid_mask_rad_tan_thin_prism_fisheye
 
 
 # * transmission_fe intrinsics scaled to downsample 4 (1296 x 864)
@@ -45,3 +45,34 @@ def test_radius_scale_shrinks_valid_region():
 
     # * Aggressive mask is a strict subset of the baseline disk
     assert bool((baseline | aggressive).eq(baseline).all())
+
+
+def test_rad_tan_thin_prism_mask_center_valid_corners_invalid():
+    intrinsics = np.array(
+        [
+            INTRINSICS[0],
+            INTRINSICS[1],
+            INTRINSICS[2],
+            INTRINSICS[3],
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ],
+        dtype=np.float64,
+    )
+    mask = geometric_valid_mask_rad_tan_thin_prism_fisheye(intrinsics, H, W, device="cpu")
+    assert mask.shape == (H, W)
+    assert bool(mask[H // 2, W // 2])
+    assert not bool(mask[0, 0])
+    assert not bool(mask[0, W - 1])
+    assert not bool(mask[H - 1, 0])
+    assert not bool(mask[H - 1, W - 1])

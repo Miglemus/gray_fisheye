@@ -4,18 +4,19 @@ from __future__ import annotations
 
 from typing import Dict, Literal, Tuple
 
-GrayCameraModel = Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]
+GrayCameraModel = Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]
 
 EVAL_MODEL_PRESETS: Dict[GrayCameraModel, Tuple[str, str]] = {
     "pinhole": ("sparse/0", "images_{downsampling}"),
     "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
     "thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "rad_tan_thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
 }
 
 
 class GrayCameraModelClass:
-    ALLOWED_MODELS = ("pinhole", "opencv_fisheye", "thin_prism_fisheye")
-    FISHEYE_MODELS = ("opencv_fisheye", "thin_prism_fisheye")
+    ALLOWED_MODELS = ("pinhole", "opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye")
+    FISHEYE_MODELS = ("opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye")
 
     def __init__(self, name: str | GrayCameraModelClass):
         if isinstance(name, GrayCameraModelClass):
@@ -63,6 +64,7 @@ GRAY_CAMERA_MODELS: Tuple[GrayCameraModel, ...] = (
     "pinhole",
     "opencv_fisheye",
     "thin_prism_fisheye",
+    "rad_tan_thin_prism_fisheye",
 )
 
 # * COLMAP parameter order for each supported camera model (lowercase keys).
@@ -87,6 +89,24 @@ CAMERA_PARAM_KEYS: Dict[str, Tuple[str, ...]] = {
         "sx1",
         "sy1",
     ),
+    "rad_tan_thin_prism_fisheye": (
+        "fx",
+        "fy",
+        "cx",
+        "cy",
+        "k0",
+        "k1",
+        "k2",
+        "k3",
+        "k4",
+        "k5",
+        "p0",
+        "p1",
+        "s0",
+        "s1",
+        "s2",
+        "s3",
+    ),
 }
 
 _PARAM_KEY_TO_COLMAP: Dict[str, str] = {
@@ -97,6 +117,7 @@ _PARAM_KEY_TO_COLMAP: Dict[str, str] = {
     "opencv": "OPENCV",
     "opencv_fisheye": "OPENCV_FISHEYE",
     "thin_prism_fisheye": "THIN_PRISM_FISHEYE",
+    "rad_tan_thin_prism_fisheye": "RAD_TAN_THIN_PRISM_FISHEYE",
 }
 
 _COLMAP_TO_PARAM_KEY: Dict[str, str] = {v: k for k, v in _PARAM_KEY_TO_COLMAP.items()}
@@ -106,12 +127,14 @@ COLMAP_TO_GRAY: Dict[str, GrayCameraModel] = {
     "SIMPLE_PINHOLE": "pinhole",
     "OPENCV_FISHEYE": "opencv_fisheye",
     "THIN_PRISM_FISHEYE": "thin_prism_fisheye",
+    "RAD_TAN_THIN_PRISM_FISHEYE": "rad_tan_thin_prism_fisheye",
 }
 
 _GRAY_TO_COLMAP: Dict[GrayCameraModel, str] = {
     "pinhole": "PINHOLE",
     "opencv_fisheye": "OPENCV_FISHEYE",
     "thin_prism_fisheye": "THIN_PRISM_FISHEYE",
+    "rad_tan_thin_prism_fisheye": "RAD_TAN_THIN_PRISM_FISHEYE",
 }
 
 
@@ -161,7 +184,7 @@ def param_key_to_colmap_model(param_key: str) -> str:
 
 
 def is_fisheye_gray_model(model: str) -> bool:
-    return normalize_gray_model(model) in ("opencv_fisheye", "thin_prism_fisheye")
+    return normalize_gray_model(model) in ("opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye")
 
 
 def gray_models_equal(left: str, right: str) -> bool:

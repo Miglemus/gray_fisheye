@@ -30,6 +30,14 @@ def test_resolved_eval_modes_defaults_and_override(tmp_path):
     assert tpf_cfg.resolved_eval_modes() == ["thin_prism_fisheye"]
     assert tpf_cfg.images_dir == "input_4"
 
+    rtpf_cfg = Config(
+        source_path="data/scene",
+        model_path=str(tmp_path / "rtpf"),
+        camera_model="rad_tan_thin_prism_fisheye",
+    )
+    assert rtpf_cfg.resolved_eval_modes() == ["rad_tan_thin_prism_fisheye"]
+    assert rtpf_cfg.images_dir == "input_4"
+
     dual_cfg = Config(
         source_path="data/scene",
         model_path=str(tmp_path / "dual"),
@@ -41,6 +49,7 @@ def test_resolved_eval_modes_defaults_and_override(tmp_path):
 
 def test_validate_eval_modes_allows_pinhole_and_colmap_model():
     validate_eval_modes(["pinhole", "thin_prism_fisheye"], "thin_prism_fisheye")
+    validate_eval_modes(["pinhole", "rad_tan_thin_prism_fisheye"], "rad_tan_thin_prism_fisheye")
     validate_eval_modes(["pinhole"], "opencv_fisheye")
 
 

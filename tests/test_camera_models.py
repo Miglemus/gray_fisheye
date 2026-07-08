@@ -24,6 +24,8 @@ from run_colmap_fixed import load_config
         ("OPENCV_FISHEYE", "opencv_fisheye"),
         ("thin_prism_fisheye", "thin_prism_fisheye"),
         ("THIN_PRISM_FISHEYE", "thin_prism_fisheye"),
+        ("rad_tan_thin_prism_fisheye", "rad_tan_thin_prism_fisheye"),
+        ("RAD_TAN_THIN_PRISM_FISHEYE", "rad_tan_thin_prism_fisheye"),
     ],
 )
 def test_normalize_gray_model_accepts_aliases(raw, expected):
@@ -36,13 +38,14 @@ def test_normalize_gray_model_accepts_aliases(raw, expected):
     [
         ("opencv_fisheye", "opencv_fisheye"),
         ("OPENCV_FISHEYE", "opencv_fisheye"),
+        ("RAD_TAN_THIN_PRISM_FISHEYE", "rad_tan_thin_prism_fisheye"),
         ("opencv", "opencv"),
         ("OPENCV", "opencv"),
     ],
 )
 def test_normalize_param_key_accepts_aliases(raw, expected):
     assert normalize_param_key(raw) == expected
-    assert param_key_to_colmap_model(raw) in {"OPENCV_FISHEYE", "OPENCV"}
+    assert param_key_to_colmap_model(raw) in {"OPENCV_FISHEYE", "OPENCV", "RAD_TAN_THIN_PRISM_FISHEYE"}
 
 
 def test_load_config_accepts_uppercase_model_in_params_json(tmp_path):
@@ -103,3 +106,7 @@ def test_intrinsics_cuda_refreshes_after_override():
     cam.intrinsics = np.ones(8, dtype=np.float64)
     cam.model = "opencv_fisheye"
     assert cam.intrinsics_cuda().numel() == 8
+
+    cam.intrinsics = np.ones(16, dtype=np.float64)
+    cam.model = "rad_tan_thin_prism_fisheye"
+    assert cam.intrinsics_cuda().numel() == 16

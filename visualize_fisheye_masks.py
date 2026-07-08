@@ -16,6 +16,7 @@ from tyro.conf import arg
 from gray.config import Config
 from gray.fisheye_mask import (
     geometric_valid_mask_opencv_fisheye,
+    geometric_valid_mask_rad_tan_thin_prism_fisheye,
     geometric_valid_mask_thin_prism_fisheye,
     intrinsics_at_resolution,
 )
@@ -24,6 +25,7 @@ from gray.scene import SceneInfo
 MASK_FUNCS = {
     "opencv_fisheye": geometric_valid_mask_opencv_fisheye,
     "thin_prism_fisheye": geometric_valid_mask_thin_prism_fisheye,
+    "rad_tan_thin_prism_fisheye": geometric_valid_mask_rad_tan_thin_prism_fisheye,
 }
 
 
@@ -31,7 +33,7 @@ MASK_FUNCS = {
 class CLI:
     source_path: Annotated[str, arg(aliases=["-s"], help="Path to COLMAP reconstruction (sparse or distorted/sparse)")]
     downsampling: Annotated[int, arg(aliases=["-r"])] = 4
-    camera_model: Literal["opencv_fisheye", "thin_prism_fisheye"] = "opencv_fisheye"
+    camera_model: Literal["opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"] = "opencv_fisheye"
     image_name: Optional[str] = None  # * default: first training view
     output: Annotated[str, arg(aliases=["-o"])] = "fisheye_mask_preview.png"
     radius_scale: float = 0.95  # * aggressivity of the radial mask (1.0 == exact 90 deg)

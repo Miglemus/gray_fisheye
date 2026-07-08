@@ -26,10 +26,23 @@ def validate_eval_modes(
         )
 
 
+def source_mode_for_eval(
+    mode: GrayCameraModelClass,
+    colmap_camera_model: GrayCameraModelClass,
+    *,
+    intrinsics_model: Optional[GrayCameraModelClass] = None,
+) -> GrayCameraModelClass:
+    """Use COLMAP views when an eval mode is supplied only through --intrinsics."""
+    if mode == intrinsics_model and mode != colmap_camera_model:
+        return colmap_camera_model
+    return mode
+
+
 EVAL_MODEL_PRESETS: Dict[EvalMode, Tuple[str, str]] = {
     "pinhole": ("sparse/0", "images_{downsampling}"),
     "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
     "thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "rad_tan_thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
 }
 
 

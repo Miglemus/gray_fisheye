@@ -92,6 +92,53 @@ def geometric_valid_mask_thin_prism_fisheye(intrinsics, height: int, width: int,
     return mask
 
 
+def geometric_valid_mask_rad_tan_thin_prism_fisheye(
+    intrinsics, height: int, width: int, device, radius_scale: float = 1.0
+):
+    """Boolean [H, W] mask for COLMAP RAD_TAN_THIN_PRISM_FISHEYE."""
+    fx, fy, cx, cy, k0, k1, k2, k3, k4, k5, p0, p1, s0, s1, s2, s3 = (float(v) for v in intrinsics)
+
+    ys = torch.arange(height, device=device, dtype=torch.float32) + 0.5
+    xs = torch.arange(width, device=device, dtype=torch.float32) + 0.5
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+
+    uu0 = (grid_x - cx) / fx
+    vv0 = (grid_y - cy) / fy
+    uu = uu0.clone()
+    vv = vv0.clone()
+
+    for _ in range(100):
+        theta2 = uu * uu + vv * vv
+        theta4 = theta2 * theta2
+        theta6 = theta4 * theta2
+        theta8 = theta4 * theta4
+        theta10 = theta8 * theta2
+        theta12 = theta6 * theta6
+        th_radial = 1.0 + k0 * theta2 + k1 * theta4 + k2 * theta6 + k3 * theta8 + k4 * theta10 + k5 * theta12
+
+        x = th_radial * uu
+        y = th_radial * vv
+        x2 = x * x
+        y2 = y * y
+        xy = x * y
+        r2 = x2 + y2
+        r4 = r2 * r2
+
+        dx_tang = 2.0 * p1 * xy + p0 * (r2 + 2.0 * x2)
+        dy_tang = 2.0 * p0 * xy + p1 * (r2 + 2.0 * y2)
+        dx_tp = s0 * r2 + s1 * r4
+        dy_tp = s2 * r2 + s3 * r4
+
+        uu = uu0 - (x + dx_tang + dx_tp - uu)
+        vv = vv0 - (y + dy_tang + dy_tp - vv)
+
+    theta = torch.sqrt(uu * uu + vv * vv)
+    max_theta = radius_scale * (math.pi / 2)
+    mask = theta < max_theta
+    mask = mask & (~torch.isnan(theta))
+    return mask
+
+
 def build_fisheye_mask(cam: CameraInfo, height: int, width: int, device, cfg) -> Optional[torch.Tensor]:
     """Build the shared radial fisheye validity mask as a [H, W] bool tensor.
 
@@ -114,5 +161,9 @@ def build_fisheye_mask(cam: CameraInfo, height: int, width: int, device, cfg) ->
         return geometric_valid_mask_opencv_fisheye(intr, height, width, device, cfg.fisheye_mask_radius_scale)
     elif model == "thin_prism_fisheye":
         return geometric_valid_mask_thin_prism_fisheye(intr, height, width, device, cfg.fisheye_mask_radius_scale)
+    elif model == "rad_tan_thin_prism_fisheye":
+        return geometric_valid_mask_rad_tan_thin_prism_fisheye(
+            intr, height, width, device, cfg.fisheye_mask_radius_scale
+        )
     else:
         raise ValueError(f"Unsupported camera model: {cam.model}")

@@ -21,8 +21,8 @@ class CameraInfo:
     image_width: int
     image_height: int
     is_test: bool
-    model: str = "pinhole"  # * "pinhole" or "opencv_fisheye" or "thin_prism_fisheye"
-    intrinsics: np.ndarray = None  # * fisheye intrinsics scaled to image resolution (8 or 12 floats)
+    model: str = "pinhole"
+    intrinsics: np.ndarray = None  # * fisheye intrinsics scaled to image resolution (8, 12, or 16 floats)
 
     @staticmethod
     def from_colmap(cfg, key, extr, intr, is_test: bool):
@@ -59,10 +59,17 @@ class CameraInfo:
             fov_y = focal2fov(fy, height)
             fov_x = focal2fov(fx, width)
             intrinsics = np.array([fx, fy, cx, cy, k1, k2, p1, p2, k3, k4, sx1, sy1], dtype=np.float64)
+        elif intr.model == "RAD_TAN_THIN_PRISM_FISHEYE":
+            fx, fy, cx, cy, k0, k1, k2, k3, k4, k5, p0, p1, s0, s1, s2, s3 = intr.params
+            fov_y = focal2fov(fy, height)
+            fov_x = focal2fov(fx, width)
+            intrinsics = np.array(
+                [fx, fy, cx, cy, k0, k1, k2, k3, k4, k5, p0, p1, s0, s1, s2, s3], dtype=np.float64
+            )
         else:
             assert False, (
                 "Colmap camera model not handled: only PINHOLE, SIMPLE_PINHOLE, "
-                "OPENCV_FISHEYE and THIN_PRISM_FISHEYE supported!"
+                "OPENCV_FISHEYE, THIN_PRISM_FISHEYE and RAD_TAN_THIN_PRISM_FISHEYE supported!"
             )
 
         if os.path.isabs(extr.name):

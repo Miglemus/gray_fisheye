@@ -24,7 +24,7 @@ class RenderCLI:
 
     iteration: Annotated[int, arg(aliases=["-t"])] = -1
     splits: List[Literal["train", "test"]] = field(default_factory=lambda: ["test"])
-    eval_models: List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye"]] = field(
+    eval_models: List[Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]] = field(
         default_factory=lambda: ["pinhole"]
     )
 

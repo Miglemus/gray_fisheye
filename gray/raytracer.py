@@ -141,7 +141,7 @@ class Raytracer(torch.nn.Module):
         from gray.camera_models import normalize_gray_model
 
         model = normalize_gray_model(getattr(cam_info, "model", "pinhole"))
-        if model in ["opencv_fisheye", "thin_prism_fisheye"]:
+        if model in ["opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]:
             # * Intrinsics are stored for the full image; rescale to the active render resolution
             intrinsics = cam_info.intrinsics_cuda().clone()
             scale_x = self.render_width / cam_info.image_width
@@ -152,8 +152,10 @@ class Raytracer(torch.nn.Module):
             intrinsics[3] *= scale_y  # cy
             if model == "opencv_fisheye":
                 camera.set_opencv_fisheye(intrinsics)
-            else:
+            elif model == "thin_prism_fisheye":
                 camera.set_thin_prism_fisheye(intrinsics)
+            else:
+                camera.set_rad_tan_thin_prism_fisheye(intrinsics)
         else:
             camera.set_pinhole()
         camera.set_pose(cam_info.origin_cuda(), cam_info.rotation_c2w_blender_cuda())
