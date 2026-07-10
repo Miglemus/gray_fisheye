@@ -137,10 +137,10 @@ def render_size(gt, cam, cli: RenderCLI, sizes: Dict[str, Tuple[int, int]]) -> T
         return cli.width, cli.height
     if gt is not None:
         return gt.shape[2], gt.shape[1]
-    if cam.image_name in sizes:
-        return sizes[cam.image_name]
     if cam.image_width and cam.image_height:
         return cam.image_width, cam.image_height
+    if cam.image_name in sizes:
+        return sizes[cam.image_name]
     raise ValueError("Cannot determine render size; pass --width and --height.")
 
 
@@ -260,19 +260,17 @@ def main() -> None:
         )
         for mode in cli.eval_models
     }
-    all_cameras = [
-        cam
-        for views in probe_views.values()
-        for cams in (views.train_cameras, views.test_cameras)
-        for cam in cams[:1]
-    ]
-    if not all_cameras:
-        raise ValueError("No cameras found for rendering")
-
     if cli.width is not None and cli.height is not None:
         init_width, init_height = cli.width, cli.height
     else:
-        init_sizes = [render_size(None, cam, cli, sizes) for cam in all_cameras]
+        init_sizes = [
+            render_size(None, cam, cli, sizes)
+            for views in probe_views.values()
+            for cams in (views.train_cameras, views.test_cameras)
+            for cam in cams
+        ]
+        if not init_sizes:
+            raise ValueError("No cameras found for rendering")
         init_width = max(width for width, _ in init_sizes)
         init_height = max(height for _, height in init_sizes)
 
