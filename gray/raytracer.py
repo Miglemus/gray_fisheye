@@ -4,7 +4,7 @@ from gray.camera import CameraInfo
 from gray.scene import SceneInfo, BasicPointCloud
 from gray.mlp import PreMLP, PostMLP
 from gray.exposure_comp import ExposureComp
-from gray.vignetting import Vignetting
+from gray.vignetting import Vignetting, should_apply_vignetting
 
 
 def _find_library_path():
@@ -197,8 +197,8 @@ class Raytracer(torch.nn.Module):
         else:
             render = output_channels
 
-        # * Apply the global vignetting model (training, evaluation and inference renders)
-        if self.cfg.vignetting_comp:
+        # * Apply the global vignetting model only for the training camera model
+        if should_apply_vignetting(self.cfg, getattr(cam_info, "model", "pinhole")):
             render = self.vignetting(render)
 
         return render

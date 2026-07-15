@@ -5,6 +5,15 @@ import torch
 import torch.nn as nn
 
 
+def should_apply_vignetting(cfg: Config, render_camera_model: str | None = None) -> bool:
+    """Apply vignetting only when rendering with the camera model used during training."""
+    if not cfg.vignetting_comp:
+        return False
+    from gray.camera_models import gray_models_equal
+
+    return gray_models_equal(render_camera_model or "pinhole", cfg.camera_model)
+
+
 class Vignetting(nn.Module):
     "Global radial vignetting model, shared by all views and optimized during training."
 
