@@ -78,6 +78,19 @@ __device__ __forceinline__ float3 thin_prism_fisheye_unproject(const float *para
         return make_float3(0.0f, 0.0f, 0.0f);
     }
 
+    // --- Verify if the convergence is valid ---
+    float final_du, final_dv;
+    thin_prism_fisheye_distortion(extra_params, uu, vv, &final_du, &final_dv);
+    const float reprojected_u = uu + final_du;
+    const float reprojected_v = vv + final_dv;
+    const float err_u = reprojected_u - uu0;
+    const float err_v = reprojected_v - vv0;
+    constexpr float kMaxReprojectionErrorSq = 1e-5f;
+
+    if ((err_u * err_u + err_v * err_v) > kMaxReprojectionErrorSq) {
+        return make_float3(0.0f, 0.0f, 0.0f); // Reject false convergence
+    }
+
     // * Equidistant fisheye radius theta = ||(uu, vv)||
     const float theta = sqrtf(uu * uu + vv * vv);
     constexpr float kMaxTheta = 1.5707963f; // pi / 2

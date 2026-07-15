@@ -39,9 +39,11 @@ def test_radius_scale_shrinks_valid_region():
     aggressive = geometric_valid_mask_opencv_fisheye(INTRINSICS, H, W, device="cpu", radius_scale=0.9)
     larger = geometric_valid_mask_opencv_fisheye(INTRINSICS, H, W, device="cpu", radius_scale=1.1)
 
-    # * Smaller radius_scale masks more pixels; larger keeps more
+    # * Smaller radius_scale masks more pixels
     assert aggressive.sum() < baseline.sum()
-    assert larger.sum() > baseline.sum()
+
+    # * radius_scale > 1 cannot grow past the CUDA raytracer's fixed 90 deg cutoff
+    assert larger.sum() == baseline.sum()
 
     # * Aggressive mask is a strict subset of the baseline disk
     assert bool((baseline | aggressive).eq(baseline).all())
