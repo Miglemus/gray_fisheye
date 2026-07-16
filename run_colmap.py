@@ -61,12 +61,12 @@ if len(maps) > 1:
     print(f"Multiple reconstructions {sizes}; using model {best_idx} ({rec.num_reg_images()} images)")
 
 # * Image undistortion
-pycolmap.undistort_images(
-    output_path=src,
-    input_path=src / "distorted" / "sparse" / str(best_idx),
-    image_path=src / "input",
-    output_type="COLMAP",
-)
+# pycolmap.undistort_images(
+#     output_path=src,
+#     input_path=src / "distorted" / "sparse" / str(best_idx),
+#     image_path=src / "input",
+#     output_type="COLMAP",
+# )
 
 # * Flatten sparse output into sparse/0
 (src / "sparse" / "0").mkdir(parents=True, exist_ok=True)
