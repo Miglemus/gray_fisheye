@@ -15,7 +15,7 @@ do
         # python colmap_bin_to_txt.py -s "$SOURCE_DIR"
         # python colmap_bin_to_txt.py -s "$SOURCE_DIR/distorted/sparse/0"
 
-        python undistort_consistent.py -s "$SOURCE_DIR" -i input -y --output_images_dir images  --output_sparse_dir sparse
+        python undistort_consistent.py -s "$SOURCE_DIR" -i input -y --output_images_dir images  --output_sparse_dir sparse --hfov_deg 120.0
 
         python resize.py -s "$SOURCE_DIR" -i input -y
         python resize.py -s "$SOURCE_DIR" -y
