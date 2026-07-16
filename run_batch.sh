@@ -24,7 +24,7 @@ do
         RESULT_PATH="$OUT_DIR/results.json"
         
         echo "Training with output directory: $OUT_DIR"
-        python train.py -s "$SOURCE_DIR" -r 1 -m $OUT_DIR --batch_size 2 --eval --vignetting_comp --vignetting_terms 3 -y --camera_model ${model,,} --ppll_forward_size 225000000 --ppll_backward_size 90000000
+        python train.py -s "$SOURCE_DIR" -r 1 -m $OUT_DIR --batch_size 2 --eval --vignetting_comp --vignetting_terms 3 -y --camera_model ${model,,}
         python render.py -m $OUT_DIR --eval-models pinhole ${model,,} --intrinsics "$SOURCE_DIR/distorted/sparse/0/cameras.bin"
         python metrics.py -m $OUT_DIR
         python result_to_csv.py -t "$RESULT_PATH"
