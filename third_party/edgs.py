@@ -58,6 +58,7 @@ class EDGSCLI:
     downsampling: Annotated[str, arg(aliases=["-r"])] = 1
     images_dir: Annotated[str, arg(aliases=["-i"])] = "images_{downsampling}"
     point_cloud_file: Annotated[str, arg(aliases=["-p"])] = "point_cloud.safetensors" 
+    colmap_sparse_subdir: str = "sparse/0"
     eval: bool = True # * Exclude test views by default
 
     # * Matching config
@@ -975,7 +976,6 @@ if __name__ == "__main__":
             exit(0)
 
     setattr(edgs_cli, "half_res_iters", 0)
-    setattr(edgs_cli, "colmap_sparse_subdir", "sparse/0")
     setattr(edgs_cli, "fisheye", False)
     setattr(edgs_cli, "camera_model", "pinhole")
     scene = SceneInfo.from_colmap(edgs_cli, parse_point_cloud=False)
