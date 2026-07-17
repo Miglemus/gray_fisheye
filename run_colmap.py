@@ -24,12 +24,20 @@ cli = tyro.cli(CLI)
 src = Path(cli.source_path)
 
 assert (src / "input").is_dir(), f"Input directory not found: {src / 'input'}"
-(src / "distorted" / "sparse").mkdir(parents=True, exist_ok=True)
+distorted_dir = src / "distorted"
+database_path = distorted_dir / "database.db"
+sparse_root = distorted_dir / "sparse"
+
+if database_path.exists():
+    database_path.unlink()
+if sparse_root.exists():
+    shutil.rmtree(sparse_root)
+sparse_root.mkdir(parents=True, exist_ok=True)
 
 # * Feature extraction
 device = pycolmap.Device.cuda if cli.gpu else pycolmap.Device.cpu
 pycolmap.extract_features(
-    database_path=src / "distorted" / "database.db",
+    database_path=database_path,
     image_path=src / "input",
     camera_mode=pycolmap.CameraMode.SINGLE,
     reader_options=pycolmap.ImageReaderOptions(camera_model=cli.camera),
@@ -39,15 +47,15 @@ pycolmap.extract_features(
 
 # * Feature matching
 pycolmap.match_exhaustive(
-    database_path=src / "distorted" / "database.db",
+    database_path=database_path,
     device=device,
 )
 
 # * Incremental mapping (bundle adjustment)
 maps = pycolmap.incremental_mapping(
-    database_path=src / "distorted" / "database.db",
+    database_path=database_path,
     image_path=src / "input",
-    output_path=src / "distorted" / "sparse",
+    output_path=sparse_root,
     options=pycolmap.IncrementalPipelineOptions(
         ba_global_function_tolerance=1e-6 # * speeds up bundle adjustment 
     ),
@@ -61,21 +69,32 @@ if len(maps) > 1:
     sizes = {i: r.num_reg_images() for i, r in maps.items()}
     print(f"Multiple reconstructions {sizes}; using model {best_idx} ({rec.num_reg_images()} images)")
 
+# * Promote the selected reconstruction to the canonical path used by fisheye training/eval.
+best_sparse_dir = sparse_root / str(best_idx)
+canonical_sparse_dir = sparse_root / "0"
+if best_sparse_dir != canonical_sparse_dir:
+    if canonical_sparse_dir.exists():
+        shutil.rmtree(canonical_sparse_dir)
+    shutil.copytree(best_sparse_dir, canonical_sparse_dir)
+    print(f"Promoted best reconstruction {best_idx} to {canonical_sparse_dir}")
+
 # * Image undistortion
 if cli.undistort:
+    shutil.rmtree(src / "sparse", ignore_errors=True)
+    shutil.rmtree(src / "images", ignore_errors=True)
     pycolmap.undistort_images(
         output_path=src,
-        input_path=src / "distorted" / "sparse" / str(best_idx),
+        input_path=canonical_sparse_dir,
         image_path=src / "input",
         output_type="COLMAP",
     )
 
-# * Flatten sparse output into sparse/0
-(src / "sparse" / "0").mkdir(parents=True, exist_ok=True)
-for f in (src / "sparse").iterdir():
-    if f.name == "0":
-        continue
-    shutil.move(str(f), str(src / "sparse" / "0" / f.name))
+    # * Flatten COLMAP undistortion output into sparse/0.
+    (src / "sparse" / "0").mkdir(parents=True, exist_ok=True)
+    for f in (src / "sparse").iterdir():
+        if f.name == "0":
+            continue
+        shutil.move(str(f), str(src / "sparse" / "0" / f.name))
 
 # * Cleanup
 # shutil.rmtree(src / "distorted")

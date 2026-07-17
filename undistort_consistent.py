@@ -107,6 +107,8 @@ if __name__ == "__main__":
     )
     for image_path in tqdm(image_paths, desc=f"Undistorting {scene_dir.name}"):
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError(f"Failed to read input image: {image_path}")
         undistorted = cv2.remap(
             image,
             map_x,
@@ -116,7 +118,8 @@ if __name__ == "__main__":
             borderValue=(0, 0, 0),
         )
         undistorted[~valid] = 0
-        cv2.imwrite(str((output_images_dir / image_path.name).with_suffix(".png")), undistorted)
+        undistorted_rgb = cv2.cvtColor(undistorted, cv2.COLOR_BGR2RGB)
+        Image.fromarray(undistorted_rgb).save((output_images_dir / image_path.name).with_suffix(".png"))
 
     write_cameras_text(output_sparse_dir / "cameras.txt", 1, cfg.width, cfg.height, pinhole_params)
     write_images_text(output_sparse_dir / "images.txt", images, 1)
@@ -149,8 +152,6 @@ if __name__ == "__main__":
 
     if image_paths:
         assets_dir = Path(cfg.report_assets_dir)
-        if not assets_dir.is_absolute():
-            assets_dir = Path("ai_reports") / "consistent_undistort_poc_images"
         assets_dir.mkdir(parents=True, exist_ok=True)
         custom = Image.open((output_images_dir / image_paths[0].name).with_suffix(".png")).convert("RGB")
         colmap_path = (scene_dir / "images" / image_paths[0].name).with_suffix(".png")

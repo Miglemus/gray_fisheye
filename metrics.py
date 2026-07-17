@@ -103,6 +103,7 @@ if __name__ == "__main__":
                         )
                         psnr_scores.extend(psnr(renders_batch, gts_batch, reduction="none").tolist())
                     else:
+                        mask_batch = valid_mask[None, None].to(renders_batch.device)
                         for idx in range(renders_batch.shape[0]):
                             ssim_scores.append(
                                 masked_ssim(renders_batch[idx], gts_batch[idx], valid_mask).item()
@@ -110,6 +111,8 @@ if __name__ == "__main__":
                             psnr_scores.append(
                                 masked_psnr(renders_batch[idx], gts_batch[idx], valid_mask).item()
                             )
+                        renders_batch = renders_batch * mask_batch
+                        gts_batch = gts_batch * mask_batch
                     lpips_scores.extend(lpips_fn(renders_batch, gts_batch).tolist())
                     image_names.extend(fnames_batch)
 
