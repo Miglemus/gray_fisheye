@@ -17,6 +17,7 @@ class CLI:
     camera: Literal["OPENCV", "OPENCV_FISHEYE", "THIN_PRISM_FISHEYE", "RAD_TAN_THIN_PRISM_FISHEYE"] = "OPENCV"
     gpu: bool = True
     delete_input: bool = False
+    undistort: bool = False
 
 cli = tyro.cli(CLI)
 
@@ -61,12 +62,13 @@ if len(maps) > 1:
     print(f"Multiple reconstructions {sizes}; using model {best_idx} ({rec.num_reg_images()} images)")
 
 # * Image undistortion
-# pycolmap.undistort_images(
-#     output_path=src,
-#     input_path=src / "distorted" / "sparse" / str(best_idx),
-#     image_path=src / "input",
-#     output_type="COLMAP",
-# )
+if cli.undistort:
+    pycolmap.undistort_images(
+        output_path=src,
+        input_path=src / "distorted" / "sparse" / str(best_idx),
+        image_path=src / "input",
+        output_type="COLMAP",
+    )
 
 # * Flatten sparse output into sparse/0
 (src / "sparse" / "0").mkdir(parents=True, exist_ok=True)
