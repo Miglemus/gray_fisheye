@@ -10,12 +10,12 @@ do
         
         # echo "Processing folder: $SOURCE_DIR with model: $model"
         # python run_colmap_fixed.py -s "$SOURCE_DIR" -c "$SOURCE_DIR/cameras.txt" --no-gpu
-        # python run_colmap.py -s "$SOURCE_DIR" --camera $model --no-gpu
+        python run_colmap.py -s "$SOURCE_DIR" --camera $model --no-gpu
+
+        python undistort_consistent.py -s "$SOURCE_DIR" -i input -y --output_images_dir images  --output_sparse_dir sparse/0 --hfov_deg 90.0 
 
         # python colmap_bin_to_txt.py -s "$SOURCE_DIR"
-        # python colmap_bin_to_txt.py -s "$SOURCE_DIR/distorted/sparse/0"
-
-        python undistort_consistent.py -s "$SOURCE_DIR" -i input -y --output_images_dir images  --output_sparse_dir sparse --hfov_deg 120.0
+        python colmap_bin_to_txt.py -s "$SOURCE_DIR/distorted/sparse/0"
 
         python resize.py -s "$SOURCE_DIR" -i input -y
         python resize.py -s "$SOURCE_DIR" -y
