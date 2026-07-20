@@ -181,32 +181,32 @@ def geometric_valid_mask_opencv_fisheye(intrinsics, height: int, width: int, dev
     Uses the CUDA raytracer unproject when available so masked pixels match inactive
     raytracer pixels exactly. ``radius_scale`` shrinks the valid disk below 90 deg.
     """
-    try:
-        return _geometric_valid_mask_cuda("opencv_fisheye", intrinsics, height, width, device, radius_scale)
-    except RuntimeError:
-        return _geometric_valid_mask_opencv_fisheye_python(intrinsics, height, width, device, radius_scale)
+    # try:
+    #     return _geometric_valid_mask_cuda("opencv_fisheye", intrinsics, height, width, device, radius_scale)
+    # except RuntimeError:
+    return _geometric_valid_mask_opencv_fisheye_python(intrinsics, height, width, device, radius_scale)
 
 
 def geometric_valid_mask_thin_prism_fisheye(intrinsics, height: int, width: int, device, radius_scale: float = 1.0):
     """Boolean [H, W] mask of pixels inside the thin prism fisheye lens disk."""
-    try:
-        return _geometric_valid_mask_cuda("thin_prism_fisheye", intrinsics, height, width, device, radius_scale)
-    except RuntimeError:
-        return _geometric_valid_mask_thin_prism_fisheye_python(intrinsics, height, width, device, radius_scale)
+    # try:
+    #     return _geometric_valid_mask_cuda("thin_prism_fisheye", intrinsics, height, width, device, radius_scale)
+    # except RuntimeError:
+    return _geometric_valid_mask_thin_prism_fisheye_python(intrinsics, height, width, device, radius_scale)
 
 
 def geometric_valid_mask_rad_tan_thin_prism_fisheye(
     intrinsics, height: int, width: int, device, radius_scale: float = 1.0
 ):
     """Boolean [H, W] mask for COLMAP RAD_TAN_THIN_PRISM_FISHEYE."""
-    try:
-        return _geometric_valid_mask_cuda(
-            "rad_tan_thin_prism_fisheye", intrinsics, height, width, device, radius_scale
-        )
-    except RuntimeError:
-        return _geometric_valid_mask_rad_tan_thin_prism_fisheye_python(
-            intrinsics, height, width, device, radius_scale
-        )
+    # try:
+    #     return _geometric_valid_mask_cuda(
+    #         "rad_tan_thin_prism_fisheye", intrinsics, height, width, device, radius_scale
+    #     )
+    # except RuntimeError:
+    return _geometric_valid_mask_rad_tan_thin_prism_fisheye_python(
+        intrinsics, height, width, device, radius_scale
+    )
 
 
 def build_fisheye_mask(cam: CameraInfo, height: int, width: int, device, cfg) -> Optional[torch.Tensor]:

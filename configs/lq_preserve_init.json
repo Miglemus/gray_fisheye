@@ -1,0 +1,10 @@
+{
+    "exp_power": 3,
+    "alpha_threshold": 0.02,
+    "init_binning": false,
+    "pruning_from_iter": 2500,
+    "pruning_min_weight": 1e-7,
+    "scale_decay": 0.9998,
+    "iterations": 7500,
+    "sh_update_laziness": 12
+}
