@@ -10,23 +10,24 @@ do
         
         # echo "Processing folder: $SOURCE_DIR with model: $model"
         # python run_colmap_fixed.py -s "$SOURCE_DIR" -c "$SOURCE_DIR/cameras.txt" --no-gpu
-        python run_colmap.py -s "$SOURCE_DIR" --camera $model --no-gpu
+        # python run_colmap.py -s "$SOURCE_DIR" --camera $model --no-gpu
 
-        python undistort_consistent.py -s "$SOURCE_DIR" -i input -y --output_images_dir images  --output_sparse_dir sparse/0 --hfov_deg 90.0 
+        # python undistort_consistent.py -s "$SOURCE_DIR" -i input -y --output_images_dir images  --output_sparse_dir sparse/0 --hfov_deg 90.0 
 
         # python colmap_bin_to_txt.py -s "$SOURCE_DIR"
-        python colmap_bin_to_txt.py -s "$SOURCE_DIR/distorted/sparse/0"
+        # python colmap_bin_to_txt.py -s "$SOURCE_DIR/distorted/sparse/0"
 
-        python resize.py -s "$SOURCE_DIR" -i input -y
-        python resize.py -s "$SOURCE_DIR" -y
-        python third_party/edgs.py -s "$SOURCE_DIR" -r 1 --roma-model indoors -y
+        # python resize.py -s "$SOURCE_DIR" -i input -y
+        # python resize.py -s "$SOURCE_DIR" -y
+        # python third_party/edgs.py -s "$SOURCE_DIR" -r 1 --roma-model indoors -y
 
         SCENE_BASENAME=$(basename "$SOURCE_DIR")
-        OUT_DIR="out/${SCENE_BASENAME}_${model}"
+        # OUT_DIR="out/${SCENE_BASENAME}_${model}"
+        OUT_DIR="out/${SCENE_BASENAME}_no_preserve"
         RESULT_PATH="$OUT_DIR/results.json"
-        
+        # --batch_size 2 --eval --vignetting_comp --vignetting_terms 3 
         echo "Training with output directory: $OUT_DIR"
-        python train.py -s "$SOURCE_DIR" -r 1 -m $OUT_DIR --batch_size 2 --eval --vignetting_comp --vignetting_terms 3 -y --camera_model ${model,,}
+        python train.py -s "$SOURCE_DIR" -r 4 -m $OUT_DIR -y --camera_model ${model,,} -c configs/lq_preserve_init.json
         python render.py -m $OUT_DIR --eval-models pinhole ${model,,} --intrinsics "$SOURCE_DIR/distorted/sparse/0/cameras.bin"
         python metrics.py -m $OUT_DIR
         python result_to_csv.py -t "$RESULT_PATH"

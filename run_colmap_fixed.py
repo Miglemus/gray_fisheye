@@ -30,6 +30,7 @@ class CLI:
         arg(aliases=["-c"], help="JSON file with camera parameters; defaults to <source>/params.json"),
     ] = None
     gpu: bool = True
+    undistort: bool = False
 
 
 def _resolve_model(data: dict, default_model: Optional[str]) -> str:
@@ -143,12 +144,13 @@ def main():
     cam = next(iter(rec.cameras.values()))
     print(f"Reconstruction camera: {cam}")
 
-    pycolmap.undistort_images(
-        output_path=src,
-        input_path=src / "distorted" / "sparse" / str(best_idx),
-        image_path=src / "input",
-        output_type="COLMAP",
-    )
+    if cli.undistort:
+        pycolmap.undistort_images(
+            output_path=src,
+            input_path=src / "distorted" / "sparse" / str(best_idx),
+            image_path=src / "input",
+            output_type="COLMAP",
+        )
 
     (src / "sparse" / "0").mkdir(parents=True, exist_ok=True)
     for f in (src / "sparse").iterdir():
