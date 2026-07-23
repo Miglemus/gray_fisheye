@@ -81,8 +81,12 @@ class CameraInfo:
 
         base, ext = os.path.splitext(image_path)
         if ext.lower() != ".png":
-            image_path = base + ".png"
-            image_name = os.path.splitext(image_name)[0] + ".png"
+            # * Prefer the converted .png (myscenes pipeline) but keep the original
+            # * extension when no .png exists (e.g. FIORD ships .jpg).
+            png_path = base + ".png"
+            if os.path.exists(png_path) or not os.path.exists(image_path):
+                image_path = png_path
+                image_name = os.path.splitext(image_name)[0] + ".png"
 
         if os.path.exists(image_path):
             with Image.open(image_path) as image:
