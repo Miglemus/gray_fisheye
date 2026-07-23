@@ -51,6 +51,30 @@ def load_mask(method_dir: Path):
     return (read_image(str(mask_path), ImageReadMode.GRAY).float()[0].cuda() / 255.0) > 0.5
 
 
+def load_mask_index(method_dir: Path):
+    """Per-render-file masks written by render.py for multi-camera rigs.
+
+    Returns {render_filename: mask_tensor} or None when no masks.json is present.
+    """
+    index_path = method_dir / "masks.json"
+    if not index_path.exists():
+        return None
+    import json
+
+    with open(index_path) as f:
+        index = json.load(f)
+    cache = {}
+    per_file = {}
+    for fname, mask_name in index.items():
+        if mask_name not in cache:
+            cache[mask_name] = (
+                read_image(str(method_dir / mask_name), ImageReadMode.GRAY).float()[0].cuda()
+                / 255.0
+            ) > 0.5
+        per_file[fname] = cache[mask_name]
+    return per_file
+
+
 if __name__ == "__main__":
     # * Parse Config
     cli = tyro.cli(MetricsCLI)
@@ -87,6 +111,7 @@ if __name__ == "__main__":
                     continue
                 loader = DataLoader(dataset, batch_size=cli.batch_size, num_workers=4, pin_memory=True)
                 valid_mask = load_mask(mode_dir)
+                mask_index = load_mask_index(mode_dir)
 
                 ssim_scores = []
                 psnr_scores = []
@@ -97,18 +122,21 @@ if __name__ == "__main__":
                     renders_batch = renders_batch.cuda()
                     gts_batch = gts_batch.cuda()
 
-                    if valid_mask is None:
+                    if valid_mask is None and mask_index is None:
                         ssim_scores.extend(
                             ssim(renders_batch, gts_batch, downsample=False, reduction="none").tolist()
                         )
                         psnr_scores.extend(psnr(renders_batch, gts_batch, reduction="none").tolist())
                     else:
                         for idx in range(renders_batch.shape[0]):
+                            view_mask = valid_mask
+                            if mask_index is not None:
+                                view_mask = mask_index.get(fnames_batch[idx], valid_mask)
                             ssim_scores.append(
-                                masked_ssim(renders_batch[idx], gts_batch[idx], valid_mask).item()
+                                masked_ssim(renders_batch[idx], gts_batch[idx], view_mask).item()
                             )
                             psnr_scores.append(
-                                masked_psnr(renders_batch[idx], gts_batch[idx], valid_mask).item()
+                                masked_psnr(renders_batch[idx], gts_batch[idx], view_mask).item()
                             )
                     lpips_scores.extend(lpips_fn(renders_batch, gts_batch).tolist())
                     image_names.extend(fnames_batch)

@@ -222,20 +222,28 @@ def load_render_views(
     )
 
 
-def fisheye_mask_for_split(mode, views, cameras, gt_images, cli, cfg, sizes):
+def fisheye_masks_for_split(mode, views, cameras, gt_images, cli, cfg, sizes):
+    """Per-colmap-camera masks {uid: mask} for a split, or None for non-fisheye modes."""
     if not mode.is_fisheye() or not cameras:
         return None
+    if getattr(views, "valid_masks", None):
+        return views.valid_masks
     if views.valid_mask is not None:
-        return views.valid_mask
+        return {cam.uid: views.valid_mask for cam in cameras}
 
-    ref_cam = cameras[0]
-    ref_gt = gt_images.get(ref_cam.image_name)
-    width, height = render_size(ref_gt, ref_cam, cli, sizes)
+    masks = {}
     mask_cfg = copy.copy(cfg)
     mask_cfg.fisheye_mask_geometric = True
-    device = ref_gt.device if ref_gt is not None else ("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Building {mode} fisheye mask at {width}x{height} on {device}...")
-    return build_fisheye_mask(ref_cam, height, width, device=device, cfg=mask_cfg)
+    ref_cams = {}
+    for cam in cameras:
+        ref_cams.setdefault(cam.uid, cam)
+    for uid, cam in sorted(ref_cams.items()):
+        ref_gt = gt_images.get(cam.image_name)
+        width, height = render_size(ref_gt, cam, cli, sizes)
+        device = ref_gt.device if ref_gt is not None else ("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Building {mode} fisheye mask for camera {uid} at {width}x{height} on {device}...")
+        masks[uid] = build_fisheye_mask(cam, height, width, device=device, cfg=mask_cfg)
+    return masks
 
 
 def main() -> None:
@@ -307,11 +315,24 @@ def main() -> None:
                     f"Expected {len(cameras)} znear values for split '{split}', got {len(cli.znear_list)}"
                 )
 
-            valid_mask = fisheye_mask_for_split(
+            valid_masks = fisheye_masks_for_split(
                 camera_model, views, cameras, gt_images, cli, cfg, sizes
             )
-            if valid_mask is not None:
-                save_image(valid_mask.float()[None], dir_name / "valid_mask.png")
+            if valid_masks is not None:
+                # * Keep valid_mask.png (first camera) for single-camera tooling, and
+                # * write per-camera masks plus a per-render-file index for rigs.
+                first_uid = cameras[0].uid
+                save_image(valid_masks[first_uid].float()[None], dir_name / "valid_mask.png")
+                for uid, m in sorted(valid_masks.items()):
+                    save_image(m.float()[None], dir_name / f"valid_mask_cam{uid}.png")
+                mask_index = {
+                    f"{i:05d}.png": f"valid_mask_cam{cam.uid}.png"
+                    for i, cam in enumerate(cameras)
+                }
+                with open(dir_name / "masks.json", "w") as f:
+                    import json
+
+                    json.dump(mask_index, f, indent=1)
 
             futures = []
             for i, cam in enumerate(cameras):

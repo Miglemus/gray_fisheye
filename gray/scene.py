@@ -38,6 +38,10 @@ class ColmapViews:
     valid_mask: Optional[torch.Tensor] = None
     valid_mask_halfres: Optional[torch.Tensor] = None
     train_images_halfres: Dict[str, torch.Tensor] = field(default_factory=dict)
+    # * Per-colmap-camera masks (keyed by CameraInfo.uid) for multi-camera rigs;
+    # * valid_mask stays the first camera's mask for single-camera compatibility.
+    valid_masks: Dict[int, torch.Tensor] = field(default_factory=dict)
+    valid_masks_halfres: Dict[int, torch.Tensor] = field(default_factory=dict)
 
 
 def _read_colmap_cameras(sparse_dir):
@@ -143,6 +147,8 @@ def load_colmap_views(
 
     valid_mask = None
     valid_mask_halfres = None
+    valid_masks = {}
+    valid_masks_halfres = {}
     if apply_fisheye_mask and cfg.fisheye_mask_geometric:
         from gray.fisheye_mask import build_fisheye_mask
 
@@ -160,14 +166,22 @@ def load_colmap_views(
         else:
             height, width = ref_cam.image_height, ref_cam.image_width
             device = "cpu"
-        valid_mask = build_fisheye_mask(ref_cam, height, width, device, cfg)
-        if build_halfres and cfg.half_res_iters > 0 and load_images:
-            valid_mask_halfres = (
-                F.interpolate(valid_mask[None, None].float(), scale_factor=0.5, mode="nearest")[
-                    0, 0
-                ]
-                > 0.5
-            )
+        # * One mask per colmap camera (multi-camera rigs have distinct intrinsics);
+        # * all views are assumed to share a single resolution.
+        ref_cams = {}
+        for cam in train_cam_infos + test_cam_infos:
+            ref_cams.setdefault(cam.uid, cam)
+        for uid, cam in sorted(ref_cams.items()):
+            valid_masks[uid] = build_fisheye_mask(cam, height, width, device, cfg)
+            if build_halfres and cfg.half_res_iters > 0 and load_images:
+                valid_masks_halfres[uid] = (
+                    F.interpolate(
+                        valid_masks[uid][None, None].float(), scale_factor=0.5, mode="nearest"
+                    )[0, 0]
+                    > 0.5
+                )
+        valid_mask = valid_masks[ref_cam.uid]
+        valid_mask_halfres = valid_masks_halfres.get(ref_cam.uid)
 
     return ColmapViews(
         train_cameras=train_cam_infos,
@@ -177,6 +191,8 @@ def load_colmap_views(
         valid_mask=valid_mask,
         valid_mask_halfres=valid_mask_halfres,
         train_images_halfres=train_images_halfres,
+        valid_masks=valid_masks,
+        valid_masks_halfres=valid_masks_halfres,
     )
 
 
@@ -212,6 +228,9 @@ class SceneInfo:
     # * Shared radial mask for fisheye vignette (same camera / resolution for all views)
     valid_mask: Optional[torch.Tensor] = None
     valid_mask_halfres: Optional[torch.Tensor] = None
+    # * Per-colmap-camera masks (keyed by CameraInfo.uid) for multi-camera rigs
+    valid_masks: Dict[int, torch.Tensor] = None
+    valid_masks_halfres: Dict[int, torch.Tensor] = None
 
     @staticmethod
     def from_colmap(cfg: Config, llffhold=8, parse_point_cloud=True) -> SceneInfo:
@@ -281,6 +300,8 @@ class SceneInfo:
             train_images_halfres=views.train_images_halfres,
             valid_mask=views.valid_mask,
             valid_mask_halfres=views.valid_mask_halfres,
+            valid_masks=views.valid_masks,
+            valid_masks_halfres=views.valid_masks_halfres,
         )
 
     @staticmethod
@@ -350,21 +371,26 @@ class SceneInfo:
                 with Image.open(cam_infos[0].image_path) as image:
                     width, height = image.size
 
+        valid_masks = {}
         if model.is_fisheye():
-            single_cam_info = cam_infos[0]
             mask_cfg = cfg or Config(
                 source_path=model_dir,
                 model_path=model_dir,
                 camera_model=model,
                 fisheye_mask_geometric=True,
             )
-            valid_mask = build_fisheye_mask(
-                single_cam_info,
-                height,
-                width,
-                device="cpu",
-                cfg=mask_cfg,
-            )
+            ref_cams = {}
+            for cam in cam_infos:
+                ref_cams.setdefault(cam.uid, cam)
+            for uid, cam in sorted(ref_cams.items()):
+                valid_masks[uid] = build_fisheye_mask(
+                    cam,
+                    height,
+                    width,
+                    device="cpu",
+                    cfg=mask_cfg,
+                )
+            valid_mask = valid_masks[cam_infos[0].uid]
 
         def load_images(cams):
             images = {}
@@ -386,6 +412,7 @@ class SceneInfo:
             pc_path=None,
             is_nerf_synthetic=False,
             valid_mask=valid_mask if model.is_fisheye() else None,
+            valid_masks=valid_masks if model.is_fisheye() else None,
         )
 
 

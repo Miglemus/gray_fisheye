@@ -14,11 +14,15 @@ from gray.camera import CameraInfo
 FISHEYE_MAX_THETA = math.pi / 2  # 90 degrees
 
 
+def _theta_d_at(theta: float, k1: float, k2: float, k3: float, k4: float) -> float:
+    """Distorted radius theta_d for off-axis angle ``theta`` and the given distortion coeffs."""
+    t2 = theta * theta
+    return theta * (1.0 + k1 * t2 + k2 * t2**2 + k3 * t2**3 + k4 * t2**4)
+
+
 def _theta_d_at_max(k1: float, k2: float, k3: float, k4: float) -> float:
     """Distorted radius theta_d corresponding to theta = 90 deg for the given distortion coeffs."""
-    t = FISHEYE_MAX_THETA
-    t2 = t * t
-    return t * (1.0 + k1 * t2 + k2 * t2**2 + k3 * t2**3 + k4 * t2**4)
+    return _theta_d_at(FISHEYE_MAX_THETA, k1, k2, k3, k4)
 
 
 def intrinsics_at_resolution(cam, height: int, width: int) -> np.ndarray:
@@ -46,7 +50,11 @@ def _geometric_valid_mask_opencv_fisheye_python(
     yd = (grid_y - cy) / fy
     theta_d = torch.sqrt(xd * xd + yd * yd)
 
-    theta_d_max = radius_scale * _theta_d_at_max(k1, k2, k3, k4)
+    # * Cutoff at theta = radius_scale * 90 deg, evaluated through the distortion
+    # * polynomial. Applying radius_scale to theta (not to theta_d(90deg)) keeps the
+    # * cutoff angle exact when the polynomial is non-monotonic near 90 deg, as with
+    # * FIORD's 200-deg lens calibrations.
+    theta_d_max = _theta_d_at(radius_scale * FISHEYE_MAX_THETA, k1, k2, k3, k4)
     return theta_d < theta_d_max
 
 def _geometric_valid_mask_thin_prism_fisheye_python(

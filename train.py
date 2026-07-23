@@ -191,9 +191,9 @@ while iteration < cfg.iterations + 1:
                 )
 
             psnrs, ssims = [], []
-            mask = scene.valid_mask
 
             for label, cam, images_dict, track_psnr_name, track_ssim_name in views:
+                mask = scene.valid_masks.get(cam.uid, scene.valid_mask) if scene.valid_masks else scene.valid_mask
                 with torch.no_grad():
                     preview_render = raytracer(cam).clamp(0, 1)
                 preview_target = images_dict[cam.image_name]
@@ -284,11 +284,13 @@ while iteration < cfg.iterations + 1:
             raytracer.set_render_resolution(cam0.image_width // 2, cam0.image_height // 2)
             images = scene.train_images_halfres
             mask = scene.valid_mask_halfres
+            masks_by_uid = scene.valid_masks_halfres
             batch_size = cfg.half_res_batch_size
         else:
             raytracer.set_render_resolution(cam0.image_width, cam0.image_height)
             images = scene.train_images
             mask = scene.valid_mask
+            masks_by_uid = scene.valid_masks
             batch_size = cfg.batch_size
 
         # *** Forward pass
@@ -297,6 +299,8 @@ while iteration < cfg.iterations + 1:
         batch_training_l1 = 0.0
         batch_training_psnr = 0.0
         for camera in batch:
+            if masks_by_uid:
+                mask = masks_by_uid.get(camera.uid, mask)
             render_unclamped = raytracer(camera)
             render = render_unclamped.clamp(0, 1)
             if cfg.exposure_comp_enabled:
