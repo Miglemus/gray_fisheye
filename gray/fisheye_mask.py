@@ -217,12 +217,32 @@ def geometric_valid_mask_rad_tan_thin_prism_fisheye(
     )
 
 
+def _load_prebuilt_mask(cam: CameraInfo, height: int, width: int, device, mask_dir: str) -> torch.Tensor:
+    """Load valid_mask_cam<uid>.png from ``mask_dir``, resized to [H, W]."""
+    import os
+
+    from PIL import Image
+
+    path = os.path.join(mask_dir, f"valid_mask_cam{cam.uid}.png")
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"fisheye_mask_dir is set but {path} does not exist")
+    import numpy as np
+
+    with Image.open(path) as im:
+        if im.size != (width, height):
+            im = im.resize((width, height), Image.NEAREST)
+        mask = torch.from_numpy(np.asarray(im.convert("L")) > 127)
+    return mask.to(device)
+
+
 def build_fisheye_mask(cam: CameraInfo, height: int, width: int, device, cfg) -> Optional[torch.Tensor]:
     """Build the shared radial fisheye validity mask as a [H, W] bool tensor.
 
     One mask suffices for every view when intrinsics and resolution are shared.
     Returns ``None`` when fisheye masking is disabled.
     """
+    if getattr(cfg, "fisheye_mask_dir", None):
+        return _load_prebuilt_mask(cam, height, width, device, cfg.fisheye_mask_dir)
     if not cfg.fisheye_mask_geometric:
         return None
 

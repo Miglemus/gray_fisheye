@@ -149,7 +149,7 @@ def load_colmap_views(
     valid_mask_halfres = None
     valid_masks = {}
     valid_masks_halfres = {}
-    if apply_fisheye_mask and cfg.fisheye_mask_geometric:
+    if apply_fisheye_mask and (cfg.fisheye_mask_geometric or getattr(cfg, "fisheye_mask_dir", None)):
         from gray.fisheye_mask import build_fisheye_mask
 
         ref_cam = train_cam_infos[0] if train_cam_infos else test_cam_infos[0]

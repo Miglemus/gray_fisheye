@@ -26,6 +26,9 @@ class DatasetConfig:
     # * Aggressivity of the radial mask: 1.0 == exact 90 deg disk (baseline); values < 1 shrink the
     # * valid radius to also cover the vignetted rim. Masked surface grows ~ (1 - radius_scale**2).
     fisheye_mask_radius_scale: float = 0.95
+    # * Directory holding prebuilt per-camera masks (valid_mask_cam<uid>.png). When set, these
+    # * override the geometric masks so every method can share the exact same mask files.
+    fisheye_mask_dir: Optional[str] = None
 
     def __post_init__(self):
         self.camera_model = normalize_gray_model(self.camera_model)
