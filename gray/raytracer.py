@@ -81,8 +81,18 @@ class Raytracer(torch.nn.Module):
         # * Only optimize the channels if they aren't a viewpoint-depenent output color
         config.update_channels.fill_(not cfg.pre_mlp and not cfg.sh)
 
-        # * Set learning rates
+        # * Zero the Adam moment and gradient buffers: they come from raw CUDA
+        # * allocations and can contain garbage (incl. NaN), which poisons the
+        # * first optimizer steps (observed deterministically on FIORD night_out).
         gaussians = self.cuda_module.get_gaussians()
+        for _field in ("mean", "scale", "rotation", "opacity", "channels",
+                       "sh_coeffs_dc", "sh_coeffs_rest"):
+            for _prefix in ("grad_", "first_moment_", "second_moment_"):
+                _buf = getattr(gaussians, _prefix + _field, None)
+                if _buf is not None:
+                    _buf.zero_()
+
+        # * Set learning rates
         gaussians.lr_rotation.fill_(cfg.lr_rotation_init)
         gaussians.lr_scale.fill_(cfg.lr_scale_init)
         gaussians.lr_mean.fill_(cfg.lr_mean_init)
