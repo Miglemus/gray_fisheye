@@ -332,6 +332,14 @@ while iteration < cfg.iterations + 1:
             else:
                 batch_training_l1 += F.l1_loss(render, target).item() / batch_size
                 batch_training_psnr += psnr(render[None], target[None]).item() / batch_size
+        if cfg.nan_grad_guard:
+            with torch.no_grad():
+                _g = raytracer.cuda_module.get_gaussians()
+                for _name in ("grad_mean", "grad_scale", "grad_rotation", "grad_opacity",
+                              "grad_channels", "grad_sh_coeffs_dc", "grad_sh_coeffs_rest"):
+                    _t = getattr(_g, _name, None)
+                    if _t is not None:
+                        torch.nan_to_num_(_t, nan=0.0, posinf=0.0, neginf=0.0)
         raytracer.step()
 
         # * Scale decay
