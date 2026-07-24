@@ -29,6 +29,10 @@ class DatasetConfig:
     # * Directory holding prebuilt per-camera masks (valid_mask_cam<uid>.png). When set, these
     # * override the geometric masks so every method can share the exact same mask files.
     fisheye_mask_dir: Optional[str] = None
+    # * Directory holding per-image transient masks (<image_name stem>.png, 255 = transient,
+    # * e.g. the photographer). Masked pixels are excluded from the training loss only; eval
+    # * and previews keep using the per-camera valid masks.
+    person_mask_dir: Optional[str] = None
     # * Zero out non-finite gaussian gradients before each optimizer step. Guard for scenes
     # * (FIORD night_out) where the backward kernel emits a few Inf/NaN rotation gradients
     # * that would otherwise poison the Adam moments and the whole model within 2 steps.

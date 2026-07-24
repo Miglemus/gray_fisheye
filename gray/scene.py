@@ -42,6 +42,11 @@ class ColmapViews:
     # * valid_mask stays the first camera's mask for single-camera compatibility.
     valid_masks: Dict[int, torch.Tensor] = field(default_factory=dict)
     valid_masks_halfres: Dict[int, torch.Tensor] = field(default_factory=dict)
+    # * Per-image training-loss masks (valid_mask AND NOT person/transient), keyed by
+    # * image_name. Only images whose person mask is non-empty appear here; everything
+    # * else falls back to the per-camera valid mask.
+    loss_masks: Dict[str, torch.Tensor] = field(default_factory=dict)
+    loss_masks_halfres: Dict[str, torch.Tensor] = field(default_factory=dict)
 
 
 def _read_colmap_cameras(sparse_dir):
@@ -183,6 +188,51 @@ def load_colmap_views(
         valid_mask = valid_masks[ref_cam.uid]
         valid_mask_halfres = valid_masks_halfres.get(ref_cam.uid)
 
+    loss_masks = {}
+    loss_masks_halfres = {}
+    if getattr(cfg, "person_mask_dir", None) and load_images:
+        from torchvision.io import read_image as tv_read_image
+
+        n_missing = 0
+        for cam in train_cam_infos:
+            mask_path = os.path.join(
+                cfg.person_mask_dir, os.path.splitext(cam.image_name)[0] + ".png"
+            )
+            if not os.path.exists(mask_path):
+                n_missing += 1
+                continue
+            image = train_images.get(cam.image_name)
+            if image is None:
+                continue
+            person = tv_read_image(mask_path)[0] > 127
+            if not person.any():
+                continue
+            height, width = image.shape[-2], image.shape[-1]
+            if person.shape != (height, width):
+                person = (
+                    F.interpolate(
+                        person[None, None].float(), size=(height, width), mode="nearest"
+                    )[0, 0]
+                    > 0.5
+                )
+            keep = ~person.to(image.device)
+            base = valid_masks.get(cam.uid)
+            loss_masks[cam.image_name] = keep & base if base is not None else keep
+            if build_halfres and cfg.half_res_iters > 0:
+                loss_masks_halfres[cam.image_name] = (
+                    F.interpolate(
+                        loss_masks[cam.image_name][None, None].float(),
+                        scale_factor=0.5,
+                        mode="nearest",
+                    )[0, 0]
+                    > 0.5
+                )
+        if n_missing:
+            print(f"[person_mask_dir] no mask file for {n_missing} train view(s); "
+                  f"they keep the per-camera valid mask")
+        print(f"[person_mask_dir] {len(loss_masks)}/{len(train_cam_infos)} train views "
+              f"have non-empty transient masks")
+
     return ColmapViews(
         train_cameras=train_cam_infos,
         test_cameras=test_cam_infos,
@@ -193,6 +243,8 @@ def load_colmap_views(
         train_images_halfres=train_images_halfres,
         valid_masks=valid_masks,
         valid_masks_halfres=valid_masks_halfres,
+        loss_masks=loss_masks,
+        loss_masks_halfres=loss_masks_halfres,
     )
 
 
@@ -231,6 +283,9 @@ class SceneInfo:
     # * Per-colmap-camera masks (keyed by CameraInfo.uid) for multi-camera rigs
     valid_masks: Dict[int, torch.Tensor] = None
     valid_masks_halfres: Dict[int, torch.Tensor] = None
+    # * Per-image training-loss masks (valid AND NOT transient), keyed by image_name
+    loss_masks: Dict[str, torch.Tensor] = None
+    loss_masks_halfres: Dict[str, torch.Tensor] = None
 
     @staticmethod
     def from_colmap(cfg: Config, llffhold=8, parse_point_cloud=True) -> SceneInfo:
@@ -302,6 +357,8 @@ class SceneInfo:
             valid_mask_halfres=views.valid_mask_halfres,
             valid_masks=views.valid_masks,
             valid_masks_halfres=views.valid_masks_halfres,
+            loss_masks=views.loss_masks,
+            loss_masks_halfres=views.loss_masks_halfres,
         )
 
     @staticmethod

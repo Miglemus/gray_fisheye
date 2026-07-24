@@ -285,12 +285,14 @@ while iteration < cfg.iterations + 1:
             images = scene.train_images_halfres
             mask = scene.valid_mask_halfres
             masks_by_uid = scene.valid_masks_halfres
+            loss_masks = scene.loss_masks_halfres
             batch_size = cfg.half_res_batch_size
         else:
             raytracer.set_render_resolution(cam0.image_width, cam0.image_height)
             images = scene.train_images
             mask = scene.valid_mask
             masks_by_uid = scene.valid_masks
+            loss_masks = scene.loss_masks
             batch_size = cfg.batch_size
 
         # *** Forward pass
@@ -301,6 +303,9 @@ while iteration < cfg.iterations + 1:
         for camera in batch:
             if masks_by_uid:
                 mask = masks_by_uid.get(camera.uid, mask)
+            if loss_masks:
+                # * Per-image transient mask (already ANDed with the valid mask)
+                mask = loss_masks.get(camera.image_name, mask)
             render_unclamped = raytracer(camera)
             render = render_unclamped.clamp(0, 1)
             if cfg.exposure_comp_enabled:
