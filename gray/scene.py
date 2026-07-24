@@ -72,7 +72,7 @@ def load_colmap_views(
     sparse_subdir: str,
     images_dir: str,
     apply_fisheye_mask: bool = False,
-    llffhold=8,
+    llffhold=None,
     load_images=True,
     build_halfres=False,
     expected_camera_model: Optional[GrayCameraModelClass] = None,
@@ -82,6 +82,8 @@ def load_colmap_views(
     cam_extrinsics, cam_intrinsics = _read_colmap_cameras(sparse_dir)
 
     # * Select views for eval
+    if llffhold is None:
+        llffhold = getattr(cfg, "llffhold", 8)
     if cfg.eval:
         if "360" in path:
             llffhold = 8
@@ -288,7 +290,7 @@ class SceneInfo:
     loss_masks_halfres: Dict[str, torch.Tensor] = None
 
     @staticmethod
-    def from_colmap(cfg: Config, llffhold=8, parse_point_cloud=True) -> SceneInfo:
+    def from_colmap(cfg: Config, llffhold=None, parse_point_cloud=True) -> SceneInfo:
         path = cfg.source_path
         views = load_colmap_views(
             cfg,

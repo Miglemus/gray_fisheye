@@ -15,7 +15,10 @@ class DatasetConfig:
     
     point_cloud_file: Annotated[str, arg(aliases=["-p"])] = "point_cloud.safetensors" # * Relative to source_path or absolute
     
-    eval: bool = True  
+    eval: bool = True
+    # * Every-Nth test split (default 8). Set to 0 to read explicit test image names from
+    # * <sparse_dir>/test.txt instead (one colmap image name per line).
+    llffhold: int = 8
 
     colmap_sparse_subdir: str = "sparse/0"  # * Overridden for fisheye camera models
     eval_modes: List[GrayCameraModel] = field(default_factory=list)
