@@ -34,13 +34,16 @@ def resize_one(job):
     kind, src, dst = job
     if os.path.exists(dst):
         return
-    if kind == "image":
-        im = Image.open(src).convert("RGB").resize((PANO_W, PANO_H), Image.LANCZOS)
-        im.save(dst)
-    else:  # mask: grayscale, conservative (BOX downscale keeps soft edges, low thr)
-        im = Image.open(src).convert("L").resize((PANO_W, PANO_H), Image.BOX)
-        arr = (np.array(im) > 32).astype(np.uint8) * 255
-        Image.fromarray(arr).save(dst)
+    try:
+        if kind == "image":
+            im = Image.open(src).convert("RGB").resize((PANO_W, PANO_H), Image.LANCZOS)
+            im.save(dst)
+        else:  # mask: grayscale, conservative (BOX downscale keeps soft edges, low thr)
+            im = Image.open(src).convert("L").resize((PANO_W, PANO_H), Image.BOX)
+            arr = (np.array(im) > 32).astype(np.uint8) * 255
+            Image.fromarray(arr).save(dst)
+    except OSError as e:  # corrupt source PNG (e.g. dark/frame_0266): skip, drop shot later
+        print(f"  [skip corrupt {kind}] {src}: {e}", flush=True)
 
 
 def pano_dirs(w, h):
@@ -113,6 +116,12 @@ def prep_scene(scene, workers=12):
             jobs.append(("mask", msrc, os.path.join(dest, "masks", s + ".png")))
     with futures.ProcessPoolExecutor(max_workers=workers) as ex:
         list(ex.map(resize_one, jobs, chunksize=4))
+
+    n_before = len(stems)
+    stems = [s for s in stems
+             if os.path.exists(os.path.join(dest, "images", s + ".png"))]
+    if len(stems) != n_before:
+        print(f"  [{scene}] dropped {n_before - len(stems)} corrupt pano(s)", flush=True)
 
     shots = {}
     for s in stems:
