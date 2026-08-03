@@ -4,18 +4,29 @@ from __future__ import annotations
 
 from typing import Dict, Literal, Tuple
 
-GrayCameraModel = Literal["pinhole", "opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]
+GrayCameraModel = Literal[
+    "pinhole", "opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye", "equirectangular"
+]
+
+# * Camera models COLMAP cannot express. They are valid gray render models but have no COLMAP
+# * counterpart, so they never come out of a sparse reconstruction and cannot be round-tripped
+# * through pycolmap -- they are supplied through an intrinsics JSON instead.
+COLMAPLESS_MODELS: Tuple[str, ...] = ("equirectangular",)
 
 EVAL_MODEL_PRESETS: Dict[GrayCameraModel, Tuple[str, str]] = {
     "pinhole": ("sparse/0", "images_{downsampling}"),
     "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
     "thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
     "rad_tan_thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    # * ERP reuses the scene's poses; its ground truth (when any exists) lives in pano_*.
+    "equirectangular": ("sparse/0", "pano_{downsampling}"),
 }
 
 
 class GrayCameraModelClass:
-    ALLOWED_MODELS = ("pinhole", "opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye")
+    ALLOWED_MODELS = (
+        "pinhole", "opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye", "equirectangular"
+    )
     FISHEYE_MODELS = ("opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye")
 
     def __init__(self, name: str | GrayCameraModelClass):
@@ -65,6 +76,7 @@ GRAY_CAMERA_MODELS: Tuple[GrayCameraModel, ...] = (
     "opencv_fisheye",
     "thin_prism_fisheye",
     "rad_tan_thin_prism_fisheye",
+    "equirectangular",
 )
 
 # * COLMAP parameter order for each supported camera model (lowercase keys).
@@ -107,6 +119,8 @@ CAMERA_PARAM_KEYS: Dict[str, Tuple[str, ...]] = {
         "s2",
         "s3",
     ),
+    # * The ERP mapping is fixed by the render resolution alone.
+    "equirectangular": (),
 }
 
 _PARAM_KEY_TO_COLMAP: Dict[str, str] = {
@@ -160,6 +174,8 @@ def normalize_gray_model(name: str | GrayCameraModelClass) -> GrayCameraModel:
     if name in COLMAP_TO_GRAY:
         return COLMAP_TO_GRAY[name]
     key = normalize_param_key(name)
+    if key in COLMAPLESS_MODELS:
+        return key
     gray = COLMAP_TO_GRAY.get(_PARAM_KEY_TO_COLMAP[key])
     if gray is not None:
         return gray
@@ -180,6 +196,8 @@ def gray_to_colmap_model(gray_model: str) -> str:
 
 def param_key_to_colmap_model(param_key: str) -> str:
     key = normalize_param_key(param_key)
+    if key in COLMAPLESS_MODELS:
+        raise ValueError(f"Camera model '{key}' has no COLMAP counterpart.")
     return _PARAM_KEY_TO_COLMAP[key]
 
 

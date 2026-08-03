@@ -3,6 +3,7 @@
 #ifdef __CUDACC__
 #include "../utils/random.h"
 #include "../utils/vec_math.h"
+#include "erp.cuh"
 #include "opencv_fisheye.cuh"
 #include "rtpf.cuh"
 #include "tpf.cuh"
@@ -13,6 +14,7 @@
 #define CAMERA_MODEL_OPENCV_FISHEYE 1
 #define CAMERA_MODEL_THIN_PRISM_FISHEYE 2
 #define CAMERA_MODEL_RAD_TAN_THIN_PRISM_FISHEYE 3
+#define CAMERA_MODEL_EQUIRECTANGULAR 4
 
 struct Camera {
     const float3 *origin;
@@ -63,6 +65,15 @@ struct Camera {
             }
             // * Convert to GRay's camera frame (x right, y up, z back) then rotate to world
             float3 cam_dir = make_float3(rtpf.x, -rtpf.y, -rtpf.z);
+            return normalize(rotation_w2c[0] * cam_dir.x + rotation_w2c[1] * cam_dir.y +
+                             rotation_w2c[2] * cam_dir.z);
+        } else if (*model_id == CAMERA_MODEL_EQUIRECTANGULAR) {
+            // * Full-sphere panorama. The mapping depends only on the launch dimensions, so no
+            // * intrinsics are read and there is no inactive-pixel case to handle.
+            float3 erp = equirectangular_unproject((idxf.x + 0.5f) / float(dim.x),
+                                                   (idxf.y + 0.5f) / float(dim.y));
+            // * Convert to GRay's camera frame (x right, y up, z back) then rotate to world
+            float3 cam_dir = make_float3(erp.x, -erp.y, -erp.z);
             return normalize(rotation_w2c[0] * cam_dir.x + rotation_w2c[1] * cam_dir.y +
                              rotation_w2c[2] * cam_dir.z);
         }
@@ -116,6 +127,9 @@ struct CameraDataHolder : torch::CustomClassHolder {
 
     void set_pinhole() { model_id.fill_(CAMERA_MODEL_PINHOLE); }
 
+    // * An ERP camera is fully described by the render resolution, so it takes no parameters.
+    void set_equirectangular() { model_id.fill_(CAMERA_MODEL_EQUIRECTANGULAR); }
+
     void set_opencv_fisheye(const Tensor &params) {
         TORCH_CHECK(params.numel() == 8, "fisheye params must have 8 elements (fx, fy, cx, cy, k1..k4)");
         model_id.fill_(CAMERA_MODEL_OPENCV_FISHEYE);
@@ -138,6 +152,7 @@ struct CameraDataHolder : torch::CustomClassHolder {
         m.class_<CameraDataHolder>("CameraDataHolder")
             .def("set_pose", &CameraDataHolder::set_pose)
             .def("set_pinhole", &CameraDataHolder::set_pinhole)
+            .def("set_equirectangular", &CameraDataHolder::set_equirectangular)
             .def("set_opencv_fisheye", &CameraDataHolder::set_opencv_fisheye)
             .def("set_thin_prism_fisheye", &CameraDataHolder::set_thin_prism_fisheye)
             .def("set_rad_tan_thin_prism_fisheye", &CameraDataHolder::set_rad_tan_thin_prism_fisheye)

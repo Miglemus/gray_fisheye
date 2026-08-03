@@ -43,6 +43,7 @@ EVAL_MODEL_PRESETS: Dict[EvalMode, Tuple[str, str]] = {
     "opencv_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
     "thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
     "rad_tan_thin_prism_fisheye": ("distorted/sparse/0", "input_{downsampling}"),
+    "equirectangular": ("sparse/0", "pano_{downsampling}"),
 }
 
 

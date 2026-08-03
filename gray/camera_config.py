@@ -11,6 +11,7 @@ import pycolmap
 import gray.colmap as colmap
 from gray.camera_models import (
     CAMERA_PARAM_KEYS,
+    COLMAPLESS_MODELS,
     normalize_gray_model,
     normalize_param_key,
     param_key_to_colmap_model,
@@ -75,6 +76,14 @@ def _params_from_dict(data: dict, model: str) -> List[float]:
 
 
 def _validate_params(model: str, params: List[float], path: Path) -> None:
+    # * COLMAP-less models (e.g. equirectangular) cannot be round-tripped through pycolmap;
+    # * validate their parameter count against CAMERA_PARAM_KEYS instead.
+    if model in COLMAPLESS_MODELS:
+        expected = len(CAMERA_PARAM_KEYS[model])
+        if len(params) != expected:
+            raise ValueError(f"{model} expects {expected} parameters, got {len(params)} in {path}")
+        return
+
     colmap_model = param_key_to_colmap_model(model)
     expected = CAMERA_MODEL_NAMES[colmap_model].num_params
     if len(params) != expected:
