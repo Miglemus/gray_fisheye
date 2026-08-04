@@ -145,9 +145,15 @@ def select_cameras_kmeans(cameras, K):
     # Assign each camera to a cluster and find distances to cluster centers
     cluster_assignments, _ = vq(cameras, cluster_centers)
 
-    # Find the camera nearest to each cluster center
+    # Find the camera nearest to each cluster center.
+    # NOTE: iterate over the centers scipy actually returned, not over K.
+    # `scipy.cluster.vq.kmeans` DROPS empty clusters, so it can return fewer than K
+    # centers, and `range(K)` then walks off the end:
+    #   IndexError: index 179 is out of bounds for axis 0 with size 179
+    # (hit on myscenes classroom, 359 train views, num_refs=180). Data-dependent, so
+    # most scenes never trigger it. When len(centers) == K this is a no-op.
     selected_indices = []
-    for k in range(K):
+    for k in range(len(cluster_centers)):
         cluster_members = cameras[cluster_assignments == k]
         distances = cdist([cluster_centers[k]], cluster_members)[0]
         nearest_camera_idx = np.where(cluster_assignments == k)[0][np.argmin(distances)]

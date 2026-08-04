@@ -23,11 +23,11 @@ do
 
         SCENE_BASENAME=$(basename "$SOURCE_DIR")
         # OUT_DIR="out/${SCENE_BASENAME}_${model}"
-        OUT_DIR="out/${SCENE_BASENAME}_no_preserve"
+        OUT_DIR="out/${SCENE_BASENAME}_test"
         RESULT_PATH="$OUT_DIR/results.json"
-        # --batch_size 2 --eval --vignetting_comp --vignetting_terms 3 
+
         echo "Training with output directory: $OUT_DIR"
-        python train.py -s "$SOURCE_DIR" -r 4 -m $OUT_DIR -y --camera_model ${model,,} -c configs/lq_preserve_init.json
+        python train.py -s "$SOURCE_DIR" -r 4 -m $OUT_DIR -y --camera_model ${model,,} --batch_size 2 --eval --vignetting_comp --vignetting_terms 3 
         python render.py -m $OUT_DIR --eval-models pinhole ${model,,} --intrinsics "$SOURCE_DIR/distorted/sparse/0/cameras.bin"
         python metrics.py -m $OUT_DIR
         python result_to_csv.py -t "$RESULT_PATH"
