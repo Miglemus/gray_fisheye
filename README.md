@@ -139,8 +139,20 @@ Once COLMAP has run successfully, you will need to resize the images and run den
 
 For fisheye captures, pass `--camera OPENCV_FISHEYE` or `--camera THIN_PRISM_FISHEYE` to `run_colmap.py`. If you already know the intrinsics, use `run_colmap_fixed.py` with a `params.json` file under the scene directory (see the fisheye section below).
 
-### Fisheye Camera Models
-GRay supports ray-traced rendering for fisheye cameras in addition to the default pinhole model. Three camera models are available: `pinhole` (default), `opencv_fisheye`, and `thin_prism_fisheye`. Fisheye training and evaluation use the distorted COLMAP reconstruction (`distorted/sparse/0`) and resized raw images (`input_{downsampling}`) rather than the undistorted pinhole outputs.
+### Camera Models
+GRay supports ray-traced rendering for several camera models in addition to the default pinhole one: `pinhole` (default), `opencv_fisheye`, `thin_prism_fisheye`, `rad_tan_thin_prism_fisheye` and `equirectangular`. Because GRay traces one ray per pixel instead of projecting gaussians, a camera model is only a pixel-to-bearing function — see `cuda/core/camera.h`.
+
+The three fisheye models use the distorted COLMAP reconstruction (`distorted/sparse/0`) and resized raw images (`input_{downsampling}`) rather than the undistorted pinhole outputs.
+
+#### Equirectangular (360 panoramas)
+`equirectangular` renders a full sphere: longitude spans 2π across the image width and latitude spans π across its height, so the model has **no intrinsics** — the mapping follows the render resolution. It has no invalid region and no seam, and COLMAP cannot represent it, so it is selected through an intrinsics JSON rather than a sparse reconstruction:
+
+```
+echo '{"model": "equirectangular"}' > erp.json
+python render.py -m out/$SCENE --eval-models equirectangular --intrinsics erp.json --width 2048 --height 1024
+```
+
+The poses come from the run's own `cameras.json`. Pass `--width/--height` explicitly: otherwise the render size falls back to the stored camera's image size. Panorama renders are large, so mind `--ppll_forward_size` (see Memory Use) — at the default 300M entries, 2048x1024 leaves 143 hits per pixel and 4096x2048 only 36.
 
 #### Scene layout
 Place your raw fisheye images under `data/$SCENE/input/`. After COLMAP, the scene should contain both `distorted/sparse/0/` (fisheye reconstruction) and `sparse/0/` (undistorted pinhole reconstruction produced by COLMAP's image undistortion step).
