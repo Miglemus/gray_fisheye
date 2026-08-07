@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from gray.camera_models import GrayCameraModelClass
 from gray.config import Config
 from gray.eval import (
     load_eval_views,
@@ -91,7 +92,7 @@ def test_load_eval_views_rejects_mismatched_sparse_model(tmp_path):
     )
 
     with pytest.raises(ValueError, match="opencv_fisheye"):
-        load_eval_views(cfg, "opencv_fisheye", load_images=False)
+        load_eval_views(cfg, GrayCameraModelClass("opencv_fisheye"), load_images=False)
 
 
 def test_load_eval_views_selects_expected_camera_models_and_masks(tmp_path):
@@ -106,14 +107,14 @@ def test_load_eval_views_selects_expected_camera_models_and_masks(tmp_path):
         downsampling=4,
     )
 
-    pinhole_views = load_eval_views(cfg, "pinhole", load_images=False)
+    pinhole_views = load_eval_views(cfg, GrayCameraModelClass("pinhole"), load_images=False)
     assert pinhole_views.train_cameras
     assert pinhole_views.test_cameras
     assert pinhole_views.valid_mask is None
     assert pinhole_views.train_cameras[0].model == "pinhole"
     assert "/images_4/" in pinhole_views.train_cameras[0].image_path
 
-    fisheye_views = load_eval_views(cfg, "opencv_fisheye", load_images=False)
+    fisheye_views = load_eval_views(cfg, GrayCameraModelClass("opencv_fisheye"), load_images=False)
     assert fisheye_views.train_cameras
     assert fisheye_views.test_cameras
     assert fisheye_views.valid_mask is not None

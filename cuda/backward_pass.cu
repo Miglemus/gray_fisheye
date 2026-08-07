@@ -1,4 +1,12 @@
 
+// * Apply the transpose of the world_to_local rotation, i.e. rotate a local-frame gradient
+// * back into world space. Same column-wise pattern as the grad_x_world computation below.
+__device__ __forceinline__ float3 rotate_grad_to_world(const float4 *world_to_local, const float3 &v) {
+    return make_float3(dot(make_float3(world_to_local[0].x, world_to_local[1].x, world_to_local[2].x), v),
+                       dot(make_float3(world_to_local[0].y, world_to_local[1].y, world_to_local[2].y), v),
+                       dot(make_float3(world_to_local[0].z, world_to_local[1].z, world_to_local[2].z), v));
+}
+
 __device__ __forceinline__ void backward_pass(const uint32_t pixel_id, const Pixel &pixel) {
     floatK background_channels = *params.config.background_channels;
     floatK remaining_channels_estimate = pixel.remaining_channels_estimate;
@@ -7,6 +15,12 @@ __device__ __forceinline__ void backward_pass(const uint32_t pixel_id, const Pix
     const float alpha_threshold = *params.config.alpha_threshold;
     const float exp_power = *params.config.exp_power;
     const float eps_scale_grad = *params.config.eps_scale_grad;
+
+    // * Ray gradients are only meaningful when Python supplied the rays; skip the work
+    // * entirely otherwise so the native path is bit-for-bit unchanged.
+    const bool needs_ray_grads = *params.config.rays_from_python;
+    float3 grad_ray_origin = make_float3(0.0f, 0.0f, 0.0f);
+    float3 grad_ray_direction = make_float3(0.0f, 0.0f, 0.0f);
 
     // * Init variables used to flow gradient from back to front
     float grad_transmittance = 0.0f;
@@ -89,6 +103,27 @@ __device__ __forceinline__ void backward_pass(const uint32_t pixel_id, const Pix
                         dot(make_float3(world_to_local[0].z, world_to_local[1].z, world_to_local[2].z), grad_x_local)) *
             scaling_factor;
 
+        // * Primary ray gradient.
+        // * The hit point is the closest approach of the ray to the gaussian centre, so in the
+        // * local frame  h_un = lo + t*ld  with  t = -(lo.ld)  and  ld = ld_raw/norm, i.e.
+        // * h_un = P_perp(ld) * lo. Differentiating that projector:
+        // *     dL/dlo     = g - (ld.g) ld
+        // *     dL/dld     = t*g - (ld.g) lo
+        // *     dL/dld_raw = ( dL/dld - (dL/dld . ld) ld ) / norm
+        // * with g = dL/dh_un = scaling_factor * grad_x_local (the same relation the
+        // * grad_x_world line above relies on). Both are then rotated back to world space.
+        if (needs_ray_grads) {
+            float3 grad_hit_unscaled = grad_x_local * scaling_factor;
+            float grad_along_direction = dot(local_ray_direction, grad_hit_unscaled);
+            float3 grad_local_origin = grad_hit_unscaled - grad_along_direction * local_ray_direction;
+            float3 grad_local_direction =
+                local_hit_distance_along_ray * grad_hit_unscaled - grad_along_direction * local_ray_origin;
+            grad_local_direction =
+                (grad_local_direction - dot(grad_local_direction, local_ray_direction) * local_ray_direction) / norm;
+            grad_ray_origin += rotate_grad_to_world(world_to_local, grad_local_origin);
+            grad_ray_direction += rotate_grad_to_world(world_to_local, grad_local_direction);
+        }
+
         // * Local to world matrix gradient
         float3 grad_l2w_0 = -grad_x_world.x * local_hit;
         float3 grad_l2w_1 = -grad_x_world.y * local_hit;
@@ -139,5 +174,13 @@ __device__ __forceinline__ void backward_pass(const uint32_t pixel_id, const Pix
 
         // * Update transmittance for next iteration
         transmittance = transmittance / (1.0f - alpha);
+    }
+
+    // * Flush the ray gradients. Written unconditionally (within the gate) so that pixels with
+    // * no hits at all -- notably everything outside the fisheye disk, whose per-pixel list is
+    // * empty -- get an exact zero rather than stale data from the previous iteration.
+    if (needs_ray_grads) {
+        params.framebuffer.grad_ray_origin[pixel_id] = grad_ray_origin;
+        params.framebuffer.grad_ray_direction[pixel_id] = grad_ray_direction;
     }
 }

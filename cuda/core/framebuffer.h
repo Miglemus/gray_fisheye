@@ -30,6 +30,13 @@ struct Framebuffer {
 
     floatK *__restrict__ grad_output_channels;
 
+    // * Gradients w.r.t. the primary ray, written by the backward pass when the rays are
+    // * supplied from Python (config.rays_from_python). They are what makes a learnable
+    // * camera model possible: everything upstream of the ray (intrinsics, a non-central
+    // * origin, a per-view pose residual) is then just torch autograd on the Python side.
+    float3 *__restrict__ grad_ray_origin;
+    float3 *__restrict__ grad_ray_direction;
+
 #ifdef __CUDACC__
     __device__ void write(uint32_t pixel_id, const Pixel &pixel, const Config &config, const Metadata &metadata) {
         output_channels[pixel_id] = pixel.output_channels;
@@ -79,6 +86,8 @@ struct FramebufferDataHolder : torch::CustomClassHolder {
     Tensor ray_direction;
 
     Tensor grad_output_channels;
+    Tensor grad_ray_origin;
+    Tensor grad_ray_direction;
 
     FramebufferDataHolder(uint32_t image_width, uint32_t image_height) {
         output_channels = torch::zeros({image_height, image_width, CHANNELS}, CUDA_FLOAT32);
@@ -90,6 +99,8 @@ struct FramebufferDataHolder : torch::CustomClassHolder {
         ray_direction = torch::zeros({image_height, image_width, 3}, CUDA_FLOAT32);
 
         grad_output_channels = torch::zeros({image_height, image_width, CHANNELS}, CUDA_FLOAT32);
+        grad_ray_origin = torch::zeros({image_height, image_width, 3}, CUDA_FLOAT32);
+        grad_ray_direction = torch::zeros({image_height, image_width, 3}, CUDA_FLOAT32);
     }
 
     Framebuffer reify() {
@@ -102,7 +113,10 @@ struct FramebufferDataHolder : torch::CustomClassHolder {
                            .ray_origin = reinterpret_cast<float3 *>(ray_origin.data_ptr()),
                            .ray_direction = reinterpret_cast<float3 *>(ray_direction.data_ptr()),
 
-                           .grad_output_channels = reinterpret_cast<floatK *>(grad_output_channels.data_ptr())};
+                           .grad_output_channels = reinterpret_cast<floatK *>(grad_output_channels.data_ptr()),
+
+                           .grad_ray_origin = reinterpret_cast<float3 *>(grad_ray_origin.data_ptr()),
+                           .grad_ray_direction = reinterpret_cast<float3 *>(grad_ray_direction.data_ptr())};
     }
 
     static void bind(torch::Library &m) {
@@ -117,7 +131,10 @@ struct FramebufferDataHolder : torch::CustomClassHolder {
             .def_readonly("ray_origin", &FramebufferDataHolder::ray_origin)
             .def_readonly("ray_direction", &FramebufferDataHolder::ray_direction)
 
-            .def_readonly("grad_output_channels", &FramebufferDataHolder::grad_output_channels);
+            .def_readonly("grad_output_channels", &FramebufferDataHolder::grad_output_channels)
+
+            .def_readonly("grad_ray_origin", &FramebufferDataHolder::grad_ray_origin)
+            .def_readonly("grad_ray_direction", &FramebufferDataHolder::grad_ray_direction);
     }
 };
 

@@ -2,19 +2,28 @@ from dataclasses import dataclass, field
 from tyro.conf import arg
 from typing import Annotated, List, Optional, Literal
 
-from gray.camera_models import GrayCameraModel, GrayCameraModelClass, is_fisheye_gray_model, normalize_gray_model
+from gray.camera_models import (
+    GrayCameraModel,
+    GrayCameraModelClass,
+    is_fisheye_gray_model,
+    normalize_gray_model,
+)
 
 
 @dataclass
 class DatasetConfig:
-    source_path: Annotated[str, arg(aliases=["-s"])]  
-    model_path: Annotated[str, arg(aliases=["-m"])]  
+    source_path: Annotated[str, arg(aliases=["-s"])]
+    model_path: Annotated[str, arg(aliases=["-m"])]
 
     downsampling: Annotated[str, arg(aliases=["-r"])] = 4  # * Integer downsampling factor
-    images_dir: Annotated[str, arg(aliases=["-i"])] = "images_{downsampling}" # * Relative to source_path or absolute
-    
-    point_cloud_file: Annotated[str, arg(aliases=["-p"])] = "point_cloud.safetensors" # * Relative to source_path or absolute
-    
+    images_dir: Annotated[str, arg(aliases=["-i"])] = (
+        "images_{downsampling}"  # * Relative to source_path or absolute
+    )
+
+    point_cloud_file: Annotated[str, arg(aliases=["-p"])] = (
+        "point_cloud.safetensors"  # * Relative to source_path or absolute
+    )
+
     eval: bool = True
     # * Every-Nth test split (default 8). Set to 0 to read explicit test image names from
     # * <sparse_dir>/test.txt instead (one colmap image name per line).
@@ -61,8 +70,8 @@ class DatasetConfig:
 @dataclass
 class RaytracerConfig:
     # * Render settings
-    render_depth: bool = False  
-    preview_train_image_name: Optional[str] = None 
+    render_depth: bool = False
+    preview_train_image_name: Optional[str] = None
     preview_test_image_name: Optional[str] = None
 
     # * Logging
@@ -72,9 +81,11 @@ class RaytracerConfig:
     log_loss_interval: int = 1000
     log_stats_interval: int = 1000
     viewer: bool = False  # * Open the viewer during training
-    yes: Annotated[bool, arg(aliases=["-y"])] = False # * Allows overwriting existing directories without prompt
+    yes: Annotated[bool, arg(aliases=["-y"])] = (
+        False  # * Allows overwriting existing directories without prompt
+    )
 
-    # * Memory use 
+    # * Memory use
     ppll_forward_size: int = 300_000_000
     ppll_backward_size: int = 120_000_000
 
@@ -90,17 +101,19 @@ class RaytracerConfig:
     init_scale: float = 0.0005  # * Higher values may work better at low resolution
     init_opacity: float = 0.1
     init_binning: bool = True
-    init_bin_size: float =  0.0015  # * Post-bugfix default; tuned to roughly match old behavior at 0.04
+    init_bin_size: float = (
+        0.0015  # * Post-bugfix default; tuned to roughly match old behavior at 0.04
+    )
 
     # * Low-resolution higher batch size warmup
-    half_res_iters: int = 0  
-    half_res_batch_size: int = 1  
+    half_res_iters: int = 0
+    half_res_batch_size: int = 1
 
     # * Loss
     lambda_ssim: float = 0.2
 
     # * Optimization
-    iterations: Annotated[int, arg(aliases=["-t"])]  = 15_000
+    iterations: Annotated[int, arg(aliases=["-t"])] = 15_000
     batch_size: int = 1  # * Cameras per optimization step (gradient accumulation)
     lr_mean_init: float = 0.00016
     lr_mean_final: float = 0.0000016
@@ -118,7 +131,9 @@ class RaytracerConfig:
     beta_1: float = 0.9
     beta_2: float = 0.999
     epsilon: float = 1e-15
-    sh_update_laziness: int = 1 # * Only step the SH non-dc coefficients every `sh_update_laziness` iterations
+    sh_update_laziness: int = (
+        1  # * Only step the SH non-dc coefficients every `sh_update_laziness` iterations
+    )
     lr_schedule_delay_mult: float = 0.01
 
     # * Pruning
@@ -154,7 +169,43 @@ class RaytracerConfig:
     vignetting_terms: int = 0  # * Number of even-power radial terms (r^2, r^4, ...)
     vignetting_include_linear_term: bool = True
     vignetting_srgb_comp: bool = False  # * Apply the vignette in (approximate) linear space
-    load_vignetting: Optional[str] = None  # * Load fixed vignetting parameters from a safetensors file
+    load_vignetting: Optional[str] = (
+        None  # * Load fixed vignetting parameters from a safetensors file
+    )
+
+    # * Learnable residual camera model (see gray/camera_model.py). The rungs are cumulative:
+    # *   off             native ray generation, nothing changes
+    # *   passthrough     rays come from Python with the residual pinned to zero -- must
+    # *                   reproduce `off`; this is the control for the whole ladder
+    # *   tilt            3-DoF bearing rotation (~ principal point + roll)
+    # *   radial          + radial residual d(theta)(theta), a cubic B-spline
+    # *   ana             + anamorphic cos/sin(k phi), k = 1, 2, on both d(theta) and d(phi)
+    # *   noncentral      + on-axis entrance-pupil profile z(theta), gauged to z(0) = 0
+    # *   central_matched same parameter count as `noncentral`, all of it central
+    # *   raxel           dense generic ray field, the upper bound of the ladder
+    camera_opt: Literal[
+        "off", "passthrough", "tilt", "radial", "ana", "noncentral", "central_matched", "raxel"
+    ] = "off"
+    camera_opt_from_iter: int = 8000  # * Phase A / phase B boundary; frozen before this
+    camera_opt_knots: int = 10  # * Control points of the angular residual splines
+    camera_opt_knots_z: int = 8  # * Control points of the non-central profile
+    # * 1e-4 is the measured optimum. Sweep on tunnel (-r 8, 3000 it, camera_opt=noncentral),
+    # * test PSNR against 26.10 for `off`: 1e-5 -> 26.15, 1e-4 -> 26.17, 1e-3 -> 26.15,
+    # * 1e-2 -> 24.76 (diverges). The regularizer barely moves it (26.17 vs 26.16 at 1e-4).
+    camera_opt_lr_tilt: float = 1e-4
+    camera_opt_lr_angular: float = 1e-4
+    camera_opt_lr_z: float = 1e-4  # * In units of the scene radius, so scene-scale free
+    camera_opt_lr_raxel: float = 1e-4
+    camera_opt_lr_final_mult: float = 0.1  # * Exponential decay applied over phase B
+    camera_opt_reg_l2: float = 1e-2
+    camera_opt_reg_curvature: float = 1e-2
+    camera_opt_raxel_stride: int = 8  # * Ray-field grid is (H // stride, W // stride)
+
+    # * Per-view SE(3) pose residual. Reported separately: it does NOT transfer to held-out
+    # * views, whose poses stay at COLMAP, so it can cost test PSNR even when train improves.
+    pose_opt: bool = False
+    pose_opt_lr_rotation: float = 1e-5
+    pose_opt_lr_translation: float = 1e-5
 
     # * MLP settings
     pre_mlp: bool = False

@@ -69,9 +69,7 @@ for mode in eval_modes:
 max_width, max_height = max_framebuffer_size(scene, eval_views)
 
 # *** Init gaussians and raytracer
-raytracer = Raytracer.from_point_cloud(
-    cfg, scene.point_cloud, max_width, max_height
-)
+raytracer = Raytracer.from_point_cloud(cfg, scene.point_cloud, max_width, max_height)
 if cfg.exposure_comp_enabled:
     raytracer.init_exposure_comp(scene.train_cameras)
 gaussians = raytracer.cuda_module.get_gaussians()
@@ -140,6 +138,20 @@ schedule_exposure_comp = get_expon_lr_func(
     lr_delay_mult=cfg.exposure_comp_lr_delay_mult,
     max_steps=cfg.iterations,
 )
+# * Camera model: phase A keeps it frozen while the geometry settles, phase B decays a
+# * single multiplier applied on top of the per-group base learning rates.
+camera_opt_phase_b = max(cfg.iterations - cfg.camera_opt_from_iter, 1)
+schedule_camera_opt = get_expon_lr_func(
+    lr_init=1.0,
+    lr_final=cfg.camera_opt_lr_final_mult,
+    max_steps=camera_opt_phase_b,
+)
+if raytracer.camera_model is not None:
+    # * z(theta) is parameterized in units of the scene radius so its LR is scale-free.
+    # * Scale only the z / pose-translation learning rates, exactly as lr_mean is scaled
+    # * above; the parameters themselves stay in COLMAP units so nothing has to be
+    # * restored at render time.
+    raytracer.camera_model.scene_scale = float(scene.point_cloud.radius)
 
 # * Setup logging
 writer = SummaryWriter(log_dir=cfg.model_path)
@@ -193,7 +205,11 @@ while iteration < cfg.iterations + 1:
             psnrs, ssims = [], []
 
             for label, cam, images_dict, track_psnr_name, track_ssim_name in views:
-                mask = scene.valid_masks.get(cam.uid, scene.valid_mask) if scene.valid_masks else scene.valid_mask
+                mask = (
+                    scene.valid_masks.get(cam.uid, scene.valid_mask)
+                    if scene.valid_masks
+                    else scene.valid_mask
+                )
                 with torch.no_grad():
                     preview_render = raytracer(cam).clamp(0, 1)
                 preview_target = images_dict[cam.image_name]
@@ -242,7 +258,9 @@ while iteration < cfg.iterations + 1:
 
             # * Log the global vignetting parameters
             if cfg.vignetting_comp:
-                vignetting_csv_path = os.path.join(cfg.model_path, f"vignetting_{iteration:05d}.csv")
+                vignetting_csv_path = os.path.join(
+                    cfg.model_path, f"vignetting_{iteration:05d}.csv"
+                )
                 with open(vignetting_csv_path, "w") as vignetting_log:
                     column_names = []
                     if cfg.vignetting_include_linear_term:
@@ -256,6 +274,39 @@ while iteration < cfg.iterations + 1:
                     values = [str(value.item()) for value in coefficients]
                     values += [str(principal_point[0].item()), str(principal_point[1].item())]
                     print(",".join(values), file=vignetting_log)
+
+            # * Log the learned camera model, sampled on a theta grid. This is what the
+            # * cross-scene z(theta) consistency figure is made of, and the monotonicity
+            # * margin turns "the residual cannot fold the map" from an assumption into a
+            # * logged number (< 0 means it folded).
+            if raytracer.camera_model is not None:
+                camera_csv_path = os.path.join(cfg.model_path, f"camera_model_{iteration:05d}.csv")
+                with open(camera_csv_path, "w") as camera_log:
+                    print(
+                        "uid,theta_deg,delta_theta_rad,delta_phi_rad,z_scene_units", file=camera_log
+                    )
+                    samples = torch.linspace(0.0, 1.0, 91, device="cuda")
+                    from gray.camera_model import bspline_eval
+
+                    for uid, lens in raytracer.camera_model.lenses.items():
+                        with torch.no_grad():
+                            radial = bspline_eval(lens.theta_weights, samples)[0]
+                            sagittal = bspline_eval(lens.phi_weights, samples)[0]
+                            profile = bspline_eval(lens.z_weights, samples)[0]
+                            profile = profile - profile[0]  # * already in COLMAP units
+                        for index in range(samples.numel()):
+                            print(
+                                f"{uid},{samples[index].item() * 90.0:.4f},"
+                                f"{radial[index].item():.9e},{sagittal[index].item():.9e},"
+                                f"{profile[index].item():.9e}",
+                                file=camera_log,
+                            )
+                margin = raytracer.camera_model.monotonicity_margin()
+                writer.add_scalar("camera_model/monotonicity_margin", margin, iteration)
+                if margin < 0.0:
+                    print(
+                        f"[ITER {iteration}] WARNING camera model folded theta (margin {margin:.3f})"
+                    )
 
         # * Acquire viewer lock
         if cfg.viewer:
@@ -278,6 +329,17 @@ while iteration < cfg.iterations + 1:
             gaussians.lr_sh_dc.fill_(schedule_dc(iteration - 1))
         if cfg.exposure_comp_enabled:
             raytracer.exposure_comp.set_lr(schedule_exposure_comp(iteration - 1))
+        if raytracer.camera_model is not None:
+            # * Phase A / phase B only. `passthrough` needs no special case: RUNGS maps it to
+            # * no components, so no lens parameter group is ever created and its residual
+            # * stays exactly zero by construction. Special-casing it here would also freeze
+            # * the per-view pose residual, which is selected independently via --pose_opt.
+            frozen = iteration < cfg.camera_opt_from_iter
+            raytracer.camera_model.set_frozen(frozen)
+            if not frozen:
+                raytracer.camera_model.set_lr_scale(
+                    schedule_camera_opt(iteration - cfg.camera_opt_from_iter)
+                )
 
         # * Warmup at half resolution
         if iteration <= cfg.half_res_iters:
@@ -337,11 +399,24 @@ while iteration < cfg.iterations + 1:
             else:
                 batch_training_l1 += F.l1_loss(render, target).item() / batch_size
                 batch_training_psnr += psnr(render[None], target[None]).item() / batch_size
+        # * Camera-model priors: L2 towards the COLMAP solution plus a curvature penalty on
+        # * the splines. Added once per batch, not once per camera.
+        if raytracer.camera_model is not None and not raytracer.camera_model.frozen:
+            regularization = raytracer.camera_model.regularization()
+            if regularization.requires_grad:
+                regularization.backward()
         if cfg.nan_grad_guard:
             with torch.no_grad():
                 _g = raytracer.cuda_module.get_gaussians()
-                for _name in ("grad_mean", "grad_scale", "grad_rotation", "grad_opacity",
-                              "grad_channels", "grad_sh_coeffs_dc", "grad_sh_coeffs_rest"):
+                for _name in (
+                    "grad_mean",
+                    "grad_scale",
+                    "grad_rotation",
+                    "grad_opacity",
+                    "grad_channels",
+                    "grad_sh_coeffs_dc",
+                    "grad_sh_coeffs_rest",
+                ):
                     _t = getattr(_g, _name, None)
                     if _t is not None:
                         torch.nan_to_num_(_t, nan=0.0, posinf=0.0, neginf=0.0)

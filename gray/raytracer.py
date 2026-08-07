@@ -5,6 +5,7 @@ from gray.scene import SceneInfo, BasicPointCloud
 from gray.mlp import PreMLP, PostMLP
 from gray.exposure_comp import ExposureComp
 from gray.vignetting import Vignetting, should_apply_vignetting
+from gray.camera_model import CameraModel
 
 
 def _find_library_path():
@@ -18,7 +19,9 @@ def _find_library_path():
         os.path.join(project_dir, "build", "Release"),
     ]
     lib_names = ["libgray.so", "gray.dll", "libgray.dylib"]
-    candidates = [os.path.join(directory, lib_name) for directory in search_dirs for lib_name in lib_names]
+    candidates = [
+        os.path.join(directory, lib_name) for directory in search_dirs for lib_name in lib_names
+    ]
 
     for path in candidates:
         if os.path.exists(path):
@@ -85,8 +88,15 @@ class Raytracer(torch.nn.Module):
         # * allocations and can contain garbage (incl. NaN), which poisons the
         # * first optimizer steps (observed deterministically on FIORD night_out).
         gaussians = self.cuda_module.get_gaussians()
-        for _field in ("mean", "scale", "rotation", "opacity", "channels",
-                       "sh_coeffs_dc", "sh_coeffs_rest"):
+        for _field in (
+            "mean",
+            "scale",
+            "rotation",
+            "opacity",
+            "channels",
+            "sh_coeffs_dc",
+            "sh_coeffs_rest",
+        ):
             for _prefix in ("grad_", "first_moment_", "second_moment_"):
                 _buf = getattr(gaussians, _prefix + _field, None)
                 if _buf is not None:
@@ -126,27 +136,24 @@ class Raytracer(torch.nn.Module):
                 self.vignetting.load_parameters(cfg.load_vignetting)
                 self.vignetting.set_lrs(0.0, 0.0)
 
+        # * Setup the learnable residual camera model. Only instantiated when enabled so the
+        # * state_dict (and therefore every existing checkpoint) is untouched by default.
+        self.camera_model = None
+        if cfg.camera_opt != "off":
+            self.camera_model = CameraModel(cfg)
+        self._base_bearing_cache = {}
+
         # * Last outputs, kept for backward pass
         self.output_channels = None
+        self._ray_origin = None
+        self._ray_direction = None
 
     def init_exposure_comp(self, scene_info: SceneInfo):
         self.exposure_comp = ExposureComp(self.cfg, scene_info)
 
-    def __call__(
-        self,
-        cam_info: CameraInfo,
-        znear=0.0,
-        zfar=99999.9,
-        skip_copy=False,
-    ):
-        "Render the scene and takes an optimization step if a target is provided."
-
-        # * Set camera parameters
+    def upload_camera_intrinsics(self, cam_info: CameraInfo):
+        "Push the camera model and its intrinsics, rescaled to the active render resolution."
         camera = self.cuda_module.get_camera()
-        camera.znear.fill_(znear)
-        camera.zfar.fill_(zfar)
-        config = self.cuda_module.get_config()
-        config.rays_from_python.fill_(False)
         camera.vertical_fov_radians.fill_(cam_info.fov_y)
         from gray.camera_models import normalize_gray_model
 
@@ -168,7 +175,134 @@ class Raytracer(torch.nn.Module):
                 camera.set_rad_tan_thin_prism_fisheye(intrinsics)
         else:
             camera.set_pinhole()
+
+    def base_bearings(self, cam_info: CameraInfo):
+        """Base per-pixel bearings in the OpenCV camera frame, probed from the raygen itself.
+
+        Bit-exactness matters: the whole ablation ladder is only meaningful if the
+        zero-residual rung reproduces the native path. Rather than re-implementing the
+        COLMAP unprojection in torch (and inheriting the `converged` latch bug in
+        gray/fisheye_geometry.py), we render one throw-away frame with an identity pose and
+        read the bearings the raygen actually produced.
+
+        Cached per (camera uid, render resolution): a bearing depends only on the intrinsics
+        and the pixel, never on the pose.
+        """
+        height, width = self.render_height, self.render_width
+        cache_key = (cam_info.uid, height, width)
+        cached = self._base_bearing_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        camera = self.cuda_module.get_camera()
+        config = self.cuda_module.get_config()
+        framebuffer = self.cuda_module.get_framebuffer()
+        previous_ray_output = bool(config.needs_ray_output.item())
+        previous_zfar = float(camera.zfar.item())
+
+        # * Self-sufficient on purpose. Depending on a prior __call__ to have uploaded the
+        # * intrinsics is a silent trap: an unconfigured camera is PINHOLE with fov_y = 0,
+        # * which probes as theta == 0 for every pixel instead of failing.
+        self.upload_camera_intrinsics(cam_info)
+
+        with torch.no_grad():
+            config.needs_ray_output.fill_(True)
+            config.rays_from_python.fill_(False)
+            # * Nothing has to be hit; we only want the raygen to emit its bearings.
+            camera.zfar.fill_(1e-6)
+            camera.set_pose(torch.zeros(3, device="cuda"), torch.eye(3, device="cuda"))
+            # * Outside the lens disk the no-grad path never writes ray_direction, so the
+            # * zero sentinel has to come from the buffer itself.
+            framebuffer.ray_direction.zero_()
+            self.cuda_module.forward_pass()
+            probed = framebuffer.ray_direction[:height, :width].detach().clone()
+
+        config.needs_ray_output.fill_(previous_ray_output)
+        camera.zfar.fill_(previous_zfar)
+
+        # * The raygen emits (x, -y, -z) of the OpenCV bearing, then rotates by c2w_blender.
+        # * With an identity pose that rotation is a no-op, so undoing the flip recovers the
+        # * OpenCV-frame bearing. (The same two flips cancel in the forward direction, which
+        # * is why `d_world = cam_info.R @ bearing` below has no sign fixup.)
+        bearings = probed * torch.tensor([1.0, -1.0, -1.0], device="cuda")
+
+        valid = bearings.norm(dim=-1) > 0.5
+        bearing_x, bearing_y, bearing_z = bearings.unbind(-1)
+        radius = torch.sqrt(bearing_x * bearing_x + bearing_y * bearing_y)
+        safe_radius = radius.clamp_min(1e-12)
+        zeros = torch.zeros_like(radius)
+        cos_phi = torch.where(valid, bearing_x / safe_radius, zeros)
+        sin_phi = torch.where(valid, bearing_y / safe_radius, zeros)
+        theta = torch.atan2(radius, bearing_z)
+        base = {
+            "bearings": bearings,
+            # * Axis of the meridional rotation; orthogonal to the bearing by construction.
+            "meridian": torch.stack([-sin_phi, cos_phi, zeros], dim=-1),
+            "theta01": (theta / (math.pi / 2.0)).clamp(0.0, 1.0),
+            "cos_phi": cos_phi,
+            "sin_phi": sin_phi,
+            "valid": valid.to(bearings.dtype),
+            # * Identifies this (camera, resolution); lets the camera model cache anything
+            # * derived from theta_base, which never changes for a given key.
+            "cache_key": cache_key,
+        }
+        self._base_bearing_cache[cache_key] = base
+        return base
+
+    @staticmethod
+    def _rotation_c2w_cuda(cam_info: CameraInfo):
+        "COLMAP c2w rotation (OpenCV convention) as a cached CUDA tensor."
+        tensor = getattr(cam_info, "_rotation_c2w_opencv_cuda", None)
+        if tensor is None:
+            tensor = torch.from_numpy(np.asarray(cam_info.R, dtype=np.float32)).cuda()
+            cam_info._rotation_c2w_opencv_cuda = tensor
+        return tensor
+
+    def __call__(
+        self,
+        cam_info: CameraInfo,
+        znear=0.0,
+        zfar=99999.9,
+        skip_copy=False,
+    ):
+        "Render the scene and takes an optimization step if a target is provided."
+
+        # * Set camera parameters
+        camera = self.cuda_module.get_camera()
+        camera.znear.fill_(znear)
+        camera.zfar.fill_(zfar)
+        config = self.cuda_module.get_config()
+        config.rays_from_python.fill_(False)
+        self.upload_camera_intrinsics(cam_info)
+
+        # * Probe the base bearings *before* setting the real pose: the probe needs an
+        # * identity pose, and it needs the intrinsics that were just uploaded.
+        base = self.base_bearings(cam_info) if self.camera_model is not None else None
+
         camera.set_pose(cam_info.origin_cuda(), cam_info.rotation_c2w_blender_cuda())
+
+        # * Learnable camera model: synthesize the per-pixel rays in torch and hand them to
+        # * the raygen through the framebuffer. Everything upstream of the ray -- intrinsic
+        # * residual, non-central origin, per-view pose -- is then plain autograd, closed by
+        # * the dL/d(ray) that cuda/backward_pass.cu now writes back.
+        self._ray_origin = None
+        self._ray_direction = None
+        if self.camera_model is not None:
+            base = dict(base)
+            base["rotation"] = Raytracer._rotation_c2w_cuda(cam_info)
+            base["origin"] = cam_info.origin_cuda()
+            ray_origin, ray_direction = self.camera_model(
+                cam_info, base, self.render_height, self.render_width
+            )
+            height, width = self.render_height, self.render_width
+            framebuffer = self.cuda_module.get_framebuffer()
+            with torch.no_grad():
+                framebuffer.ray_origin[:height, :width].copy_(ray_origin.detach())
+                framebuffer.ray_direction[:height, :width].copy_(ray_direction.detach())
+            config.rays_from_python.fill_(True)
+            if torch.is_grad_enabled():
+                self._ray_origin = ray_origin
+                self._ray_direction = ray_direction
 
         # * Set gaussian colors from view direction MLP
         if self.cfg.pre_mlp:
@@ -177,10 +311,12 @@ class Raytracer(torch.nn.Module):
         # * Render and step if required
         framebuffer = self.cuda_module.get_framebuffer()
         grad_enabled = torch.is_grad_enabled()
-        assert not (skip_copy and grad_enabled), "skip_copy=True is not supported with gradients enabled"
-        assert not (
-            config.render_ellipsoids.item() and grad_enabled
-        ), "render_ellipsoids=True is only supported for no-grad display renders"
+        assert not (skip_copy and grad_enabled), (
+            "skip_copy=True is not supported with gradients enabled"
+        )
+        assert not (config.render_ellipsoids.item() and grad_enabled), (
+            "render_ellipsoids=True is only supported for no-grad display renders"
+        )
 
         self.cuda_module.forward_pass()
 
@@ -219,11 +355,38 @@ class Raytracer(torch.nn.Module):
         with torch.no_grad():
             framebuffer = self.cuda_module.get_framebuffer()
             h, w = self.render_height, self.render_width
-            framebuffer.grad_output_channels[:h, :w].copy_(self.output_channels.grad.moveaxis(0, -1))
+            framebuffer.grad_output_channels[:h, :w].copy_(
+                self.output_channels.grad.moveaxis(0, -1)
+            )
             self.output_channels = None
 
         # * Backprop raytracer
         self.cuda_module.backward_pass()
+
+        # * Third stage: dL/d(ray) -> the camera-model parameters. Deliberately a plain
+        # * autograd.backward rather than an autograd.Function, so gray's documented
+        # * invariant (forward-pass state stays intact until backward()) still holds, and
+        # * so the gradients accumulate across the cameras of a batch for free.
+        if self._ray_origin is not None:
+            with torch.no_grad():
+                grad_ray_origin = framebuffer.grad_ray_origin[:h, :w].clone()
+                grad_ray_direction = framebuffer.grad_ray_direction[:h, :w].clone()
+            # * Only the tensors that actually carry a graph. The ray origin is a plain
+            # * broadcast of the camera centre unless the non-central or pose rungs are on,
+            # * and `passthrough` gives neither a graph -- autograd.backward raises on any
+            # * input without a grad_fn, so the rungs must be filtered, not assumed.
+            tensors, gradients = [], []
+            for tensor, gradient in (
+                (self._ray_origin, grad_ray_origin),
+                (self._ray_direction, grad_ray_direction),
+            ):
+                if tensor.requires_grad:
+                    tensors.append(tensor)
+                    gradients.append(gradient)
+            if tensors:
+                torch.autograd.backward(tensors, gradients)
+        self._ray_origin = None
+        self._ray_direction = None
 
     def step(self):
         # * Update stats
@@ -240,6 +403,8 @@ class Raytracer(torch.nn.Module):
             self.exposure_comp.step()
         if self.cfg.vignetting_comp:
             self.vignetting.step()
+        if self.camera_model is not None:
+            self.camera_model.step()
 
     def set_render_resolution(self, width: int, height: int):
         "Render at a reduced resolution (must not exceed the allocated framebuffer size)."
@@ -460,6 +625,9 @@ class Raytracer(torch.nn.Module):
 
         if cfg.pre_mlp:
             raytracer.pre_mlp.initialize()
+
+        if raytracer.camera_model is not None:
+            raytracer.camera_model.materialize_from_state_dict(state_dict)
 
         raytracer.load_state_dict(state_dict)
         return raytracer
