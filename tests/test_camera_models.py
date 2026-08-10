@@ -5,8 +5,10 @@ import pytest
 
 from gray.camera_models import (
     CAMERA_PARAM_KEYS,
+    GrayCameraModelClass,
     gray_models_equal,
     gray_model_from_colmap,
+    is_fisheye_gray_model,
     normalize_gray_model,
     normalize_param_key,
     param_key_to_colmap_model,
@@ -26,11 +28,36 @@ from run_colmap_fixed import load_config
         ("THIN_PRISM_FISHEYE", "thin_prism_fisheye"),
         ("rad_tan_thin_prism_fisheye", "rad_tan_thin_prism_fisheye"),
         ("RAD_TAN_THIN_PRISM_FISHEYE", "rad_tan_thin_prism_fisheye"),
+        ("equirectangular", "equirectangular"),
+        ("EQUIRECTANGULAR", "equirectangular"),
     ],
 )
 def test_normalize_gray_model_accepts_aliases(raw, expected):
     assert normalize_gray_model(raw) == expected
     assert gray_model_from_colmap(raw) == expected
+
+
+def test_equirectangular_is_not_a_fisheye_and_has_no_colmap_model():
+    """ERP is a first-class render model but COLMAP cannot express it."""
+    model = GrayCameraModelClass("equirectangular")
+    assert not model.is_fisheye(), "ERP must not take the fisheye sparse/images path or disk mask"
+    assert not is_fisheye_gray_model("equirectangular")
+    assert CAMERA_PARAM_KEYS["equirectangular"] == (), "ERP is defined by the render resolution"
+    with pytest.raises(ValueError, match="no COLMAP counterpart"):
+        param_key_to_colmap_model("equirectangular")
+
+
+def test_equirectangular_intrinsics_json_needs_no_parameters(tmp_path):
+    # * gray.camera_config is the loader render.py uses via --intrinsics. run_colmap_fixed keeps
+    # * its own copy for COLMAP runs, which an ERP camera can never come out of.
+    from gray.camera_config import load_config as load_camera_config
+
+    path = tmp_path / "erp.json"
+    path.write_text(json.dumps({"model": "equirectangular"}))
+
+    camera = load_camera_config(path)
+    assert camera.model == "equirectangular"
+    assert camera.intrinsics == []
 
 
 @pytest.mark.parametrize(

@@ -414,6 +414,10 @@ class SceneInfo:
                     intrinsics[2] *= scale_x
                     intrinsics[3] *= scale_y
                     cam_info.intrinsics = intrinsics
+                elif model == GrayCameraModelClass("equirectangular"):
+                    # * ERP has no intrinsics and no field of view: the mapping is defined by the
+                    # * render resolution, so only the pose carries over from the stored camera.
+                    cam_info.intrinsics = None
                 else:
                     if len(intrinsics) == 3:  # SIMPLE_PINHOLE: f, cx, cy
                         fx = intrinsics[0] * scale_x

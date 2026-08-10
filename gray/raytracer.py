@@ -166,8 +166,16 @@ class Raytracer(torch.nn.Module):
                 camera.set_thin_prism_fisheye(intrinsics)
             else:
                 camera.set_rad_tan_thin_prism_fisheye(intrinsics)
-        else:
+        elif model == "equirectangular":
+            # * No intrinsics to rescale: the ERP mapping follows the render resolution itself.
+            camera.set_equirectangular()
+        elif model == "pinhole":
             camera.set_pinhole()
+        else:
+            # *** Never fall through to pinhole here. A model that reaches this point is a known
+            # *** gray model with no CUDA dispatch, and silently rendering it as a pinhole would
+            # *** produce plausible images labelled as the wrong camera.
+            raise ValueError(f"Camera model '{model}' has no raytracer dispatch")
         camera.set_pose(cam_info.origin_cuda(), cam_info.rotation_c2w_blender_cuda())
 
         # * Set gaussian colors from view direction MLP
