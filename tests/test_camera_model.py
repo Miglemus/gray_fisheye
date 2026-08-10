@@ -5,6 +5,8 @@ compares rungs against each other, so it is only meaningful if the zero-residual
 indistinguishable from gray's native ray generation.
 """
 
+import dataclasses
+
 import numpy as np
 import pytest
 import torch
@@ -244,3 +246,43 @@ def test_monotonicity_margin_detects_a_folded_map():
         ramp = torch.linspace(0.0, -5.0, lens.theta_weights.shape[-1], device="cuda")
         lens.theta_weights[0].copy_(ramp)
     assert raytracer.camera_model.monotonicity_margin() < 0.0
+
+
+def test_base_bearings_do_not_collide_across_camera_models():
+    """Two camera models, same uid and same render resolution -> different bearings.
+
+    `render.py --eval-models pinhole rad_tan_thin_prism_fisheye` probes both models for the
+    same camera in one process. The cache used to key on (uid, height, width) alone, so the
+    second model silently received the first one's bearings. That is invisible whenever the
+    two happen to render at different sizes (myscenes: 400x266 vs 1368x912) and catastrophic
+    when they do not (`workshop_immervision`, both 1440x1080): the fisheye pass re-rendered
+    at 13.31 dB against the 25.37 the same checkpoint reached live.
+
+    Order matters -- probing the fisheye first hides the bug -- so assert BOTH directions.
+    """
+    raytracer = build_scene("passthrough")
+    fisheye = fisheye_camera()
+    pinhole = dataclasses.replace(fisheye, model="pinhole", intrinsics=None)
+
+    # * Same uid and same resolution: the two differ only by the camera model.
+    assert pinhole.uid == fisheye.uid
+    assert (pinhole.image_width, pinhole.image_height) == (fisheye.image_width, fisheye.image_height)
+
+    pinhole_first = raytracer.base_bearings(pinhole)["bearings"].clone()
+    fisheye_second = raytracer.base_bearings(fisheye)["bearings"].clone()
+    assert not torch.allclose(pinhole_first, fisheye_second)
+
+    # * Same again on a fresh raytracer, fisheye first: the cache must not leak either way.
+    raytracer = build_scene("passthrough")
+    fisheye_first = raytracer.base_bearings(fisheye)["bearings"].clone()
+    pinhole_second = raytracer.base_bearings(pinhole)["bearings"].clone()
+    assert not torch.allclose(fisheye_first, pinhole_second)
+
+    # * And the model each camera gets is order-independent.
+    assert torch.equal(fisheye_first, fisheye_second)
+    assert torch.equal(pinhole_first, pinhole_second)
+
+    # * The camera model caches theta-derived tables on `cache_key`, so it must separate the
+    # * two as well -- otherwise the collision simply moves one level up.
+    assert (raytracer.base_bearings(pinhole)["cache_key"]
+            != raytracer.base_bearings(fisheye)["cache_key"])

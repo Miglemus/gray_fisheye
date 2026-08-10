@@ -42,7 +42,41 @@ def find_split(run_dir, camera_model="rad_tan_thin_prism_fisheye", split="test")
     mask_path = os.path.join(parent, "valid_mask.png")
     if not os.path.exists(mask_path):
         mask_path = os.path.join(os.path.dirname(parent), "valid_mask.png")
-    return renders, ground_truth, mask_path
+    return renders, ground_truth, mask_path, parent
+
+
+def load_masks(parent, mask_path, renders):
+    """(per-view masks, union) -- honouring a multi-camera rig's per-view mask index.
+
+    On a single-camera scene `valid_mask.png` is the mask for every view. On a rig it is
+    only the FIRST camera's: render.py also writes `valid_mask_cam<k>.png` plus a
+    `masks.json` naming the mask of each render. On FullCircle the two lenses' disks differ
+    by 1864 px (0.36 % of the frame) at the rim, so scoring cam2's views against cam1's
+    disk quietly counts invalid pixels. That bias is identical in every run and so cancels
+    in a rung-vs-rung delta, but it corrupts the absolute number -- and the outer ring is
+    exactly where the residual is supposed to act.
+
+    The ring geometry is built from the UNION so that ring k means the same pixels in every
+    run and for both cameras; only the per-view validity differs.
+    """
+    index = os.path.join(parent, "masks.json")
+    if os.path.exists(index):
+        with open(index) as handle:
+            mapping = json.load(handle)
+        cache, per_view = {}, []
+        for path in renders:
+            name = mapping.get(os.path.basename(path))
+            if name is None:
+                per_view = []
+                break
+            if name not in cache:
+                cache[name] = np.asarray(
+                    Image.open(os.path.join(parent, name)).convert("L")) > 127
+            per_view.append(cache[name])
+        if per_view:
+            return per_view, np.logical_or.reduce(list(cache.values()))
+    shared = np.asarray(Image.open(mask_path).convert("L")) > 127
+    return [shared] * len(renders), shared
 
 
 def ring_index(mask, num_rings):
@@ -67,23 +101,28 @@ def ring_index(mask, num_rings):
 
 
 def evaluate(run_dir, num_rings):
-    renders, ground_truth, mask_path = find_split(run_dir)
-    mask = np.asarray(Image.open(mask_path).convert("L")) > 127
-    bins, edges = ring_index(mask, num_rings)
-    ring_masks = [mask & (bins == k) for k in range(num_rings)]
+    renders, ground_truth, mask_path, parent = find_split(run_dir)
+    view_masks, union = load_masks(parent, mask_path, renders)
+    bins, edges = ring_index(union, num_rings)
+    # * Cached per distinct mask object: a rig has two, not one per view.
+    ring_masks = {}
+    for mask in view_masks:
+        if id(mask) not in ring_masks:
+            ring_masks[id(mask)] = [mask & (bins == k) for k in range(num_rings)]
 
     squared = np.zeros(num_rings)
     counts = np.zeros(num_rings)
     disk_squared = 0.0
     disk_count = 0
     per_view = []
-    for render_path, gt_path in zip(renders, ground_truth):
+    for render_path, gt_path, mask in zip(renders, ground_truth, view_masks):
         render = np.asarray(Image.open(render_path).convert("RGB"), dtype=np.float64) / 255.0
         gt = np.asarray(Image.open(gt_path).convert("RGB"), dtype=np.float64) / 255.0
         error = ((render - gt) ** 2).sum(-1)
+        rings = ring_masks[id(mask)]
         for k in range(num_rings):
-            squared[k] += error[ring_masks[k]].sum()
-            counts[k] += ring_masks[k].sum() * 3
+            squared[k] += error[rings[k]].sum()
+            counts[k] += rings[k].sum() * 3
         view_squared = error[mask].sum()
         disk_squared += view_squared
         disk_count += mask.sum() * 3
@@ -97,7 +136,8 @@ def evaluate(run_dir, num_rings):
         "ring_edges": edges[: num_rings + 1],
         "disk_pooled": to_db(disk_squared, disk_count),
         "disk_per_view_mean": float(np.mean(per_view)),
-        "valid_fraction": float(mask.mean()),
+        "valid_fraction": float(np.mean([m.mean() for m in view_masks])),
+        "distinct_masks": len(ring_masks),
     }
 
 

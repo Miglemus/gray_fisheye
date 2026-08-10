@@ -40,6 +40,46 @@ against an already-trained run.
 Note `-c` on `train.py` is the preset path, not the camera model: write `-c configs/lq.json`
 (literal `open()`, so `-c lq` raises), and select the camera with `--camera_model`.
 
+### Scenes that are NOT myscenes (`data/others/*`)
+
+`train_myscenes.sh` pins `-r 4` and the myscenes directory layout, so it does not apply.
+Mirror the recipe that produced the scene's published `gray` row — for
+`workshop_immervision`, `dataset/others_ocv/queue_immervision.sh` step `gray`:
+
+```bash
+$PY train.py -s /workspace/gray/data/others/workshop_immervision -r 1 \
+  -m out/workshop_immervision_noncentral -y \
+  --camera_model rad_tan_thin_prism_fisheye --batch_size 2 --eval \
+  --vignetting_comp --vignetting_terms 3 --iterations 15000 \
+  --camera_opt noncentral --camera_opt_from_iter 3000
+$PY render.py -m out/workshop_immervision_noncentral \
+  --eval-models pinhole rad_tan_thin_prism_fisheye \
+  --intrinsics /workspace/gray/data/others/workshop_immervision/distorted/sparse/0/cameras.bin
+$PY metrics.py -m ... && $PY result_to_csv.py -t .../results.json && $PY measure_fps.py -m ...
+```
+
+Traps, each of which silently corrupts the comparison:
+
+* **`-r 1`, not `-r 4`.** 1440x1080 IS the working resolution here; `-r 4` would train at
+  360x270 and the row would not be comparable to anything.
+* **Always run an `--camera_opt off` control in THIS worktree**, not just a diff against the
+  published `gray` number. The branch changes CUDA, and the control is what proves the change
+  is neutral (measured: 25.282 against a published 25.220, i.e. inside the ±0.06 noise).
+* **Cross-check `psnr.csv` (live) against `results.json` (re-rendered PNGs) on every new
+  scene.** They agree to ~0.01 dB when nothing is wrong. This is what caught the stale-bearing
+  collision that cost this scene 12 dB — see IMPLEMENTATION.md GOTCHAS.
+* **The card must be nearly free.** This scene peaks ~16 GB (3.35 M init points at full res),
+  and other agents run GPU-1 jobs in the `default` pueue group, i.e. outside the `gpu1` lane,
+  so that group's 1-parallel setting does not by itself keep the card to one job. Guard the
+  job with a free-memory wait (`gray/worktrees/masked-efficiency/scripts/gpuwait.sh 1 17000
+  <cmd>`); without one it OOMs at `Raytracer.__init__`.
+
+Cross-method numbers for this scene come from `gray/scripts/masked_eval_immervision.py
+--track rttpf` then `gray/scripts/collect_immervision.py --track rttpf`
+(-> `dataset/fisheye_baselines/immervision_results.csv`), which both carry a
+`gray-non-central` entry. Do **not** read quality numbers off `results.json`: its LPIPS is a
+different definition (0.5603 against the shared pass's 0.3514 for the same renders).
+
 ## The ablation ladder
 
 One flag, `--camera_opt`, cumulative left to right:
@@ -106,16 +146,100 @@ is the `valid_mask.png` that `render.py` saved, which is built from the COLMAP i
 and is therefore identical across rungs — the learned residual never touches
 `cam_info.intrinsics`.
 
+On a **multi-camera rig** it now reads the run's `masks.json` and gives each view the mask
+of the lens that took it, reporting `distinct_masks` so you can see it engaged. It used to
+apply `valid_mask.png` — which is only the FIRST camera's — to every view; on FullCircle
+the two lenses' disks differ by 1864 px (0.36 % of the frame) at the rim, i.e. exactly
+where the residual is supposed to act. The bias was identical in every run and so cancelled
+in a rung-vs-rung delta, but it corrupted the absolute number.
+
 A radial/anamorphic residual vanishes at `theta = 0` and the non-central term scales as
 `sin(theta) z(theta) / depth`, so **both are peripheral by construction**. Full-disk PSNR
 averages that away; the ring table is what shows whether a rung did what it claims.
 
 After any baseline run: `cd /workspace/fisheye-baseline-viewer && ./ctl.sh rebuild`.
 
+## FullCircle, `refit_rttpf` track (9 scenes, dual back-to-back fisheye rig)
+
+A second dataset for the camera model, and the one where it does **nothing** — see
+IMPLEMENTATION.md "RESULTS — FullCircle". Run it with:
+
+```bash
+bash scripts/queue_fullcircle_rttpf.sh <scene> <rung> [gpu] [extra train.py args]
+#   scene = room1 room2 room3 flat1 flat2 lab lounge dark persons
+#   rung  = off | ... | noncentral        `off` is the paired control
+NAME_SUFFIX=_lr1e3 bash scripts/queue_fullcircle_rttpf.sh room2 noncentral 1 \
+    --camera_opt_lr_angular 1e-3       # a probe, lands in its own dir
+```
+
+The recipe is byte-for-byte `dataset/fullcircle_code/queue_fullcircle_gray_rttpf.sh` — the
+script that produced the published `gray` row — with **only `--camera_opt` added**, so the
+delta is the camera model. It writes `out/fullcircle_rttpf/<scene>_refit_rttpf[_<rung>]`,
+which is where `masked_eval_rttpf.py` looks for methods `gray-nc` / `gray-nc-off`.
+
+Three things this track taught, all of them traps:
+
+* **Queue a VRAM guard, not just a pueue group.** pueue serialises its *own* group; a
+  process started outside it can still hold the card. Four runs died on OOM 13 s after
+  start because a foreign job held 12 GB of the TITAN RTX. The script now waits for
+  >15 GB free before allocating (same guard as `queue_fullcircle_gray.sh`).
+* **These scenes peak at ~13 GB at `-r 4`**, so they need the 24 GB card; the 12 GB one
+  cannot run them at all.
+* **Never quote a timing measured while the card was shared.** The first batch reports
+  63-245 FPS and 10-16 min of training on comparable scenes, all of it contention.
+  `scripts/measure_fullcircle_fps.sh` re-measures every run of the track, back to back,
+  pinned to gpu1 — including the published `gray` runs, which had no `fps.csv` at all.
+
+Evaluation is the shared pass, never a self-reported number:
+
+```bash
+python dataset/fullcircle_code/masked_eval_rttpf.py --variants refit_rttpf \
+    --methods gray gray-nc gray-nc-off --out .../fullcircle_tracks/rttpf_masked_nc
+python dataset/fullcircle_code/merge_masked_metrics.py \
+    --from .../rttpf_masked_nc --into .../rttpf_masked
+```
+
+**Always eval to a side stem and merge.** Pointing `--out` at the canonical stem rewrites
+it with only the methods you ran, silently dropping every other column.
+
+## Analysis of the learned model (`scripts/analysis/`)
+
+Written for the physics report; run in this order, each writes a JSON next to itself.
+
+```bash
+python scripts/analysis/collect.py            # per-view + per-ring masked PSNR, all methods
+python scripts/analysis/rungs.py tunnel workshop reception   # same, per ablation rung
+python scripts/analysis/optics.py             # z(theta), caustic, COLMAP (theta, depth) stats
+python scripts/analysis/fields.py             # all 5 azimuthal channels from the checkpoints
+python scripts/analysis/crops.py workshop reception   # mechanically-chosen comparison crops
+python scripts/analysis/pack.py               # merge into report_data.json
+```
+
+Three things worth knowing before reusing them:
+
+* `collect.py` recomputes masked PSNR on CPU in numpy and **reproduces the viewer's GPU
+  numbers exactly** (27.878 / 28.036 / ... on all 21 scene-method pairs), so it is a valid
+  independent check of the eval path, not just a convenience.
+* `rungs.py` resolves runs from BOTH `/workspace/gray/tmp/final` and
+  `<worktree>/tmp/final` — `tmp/` is relative to the launching shell's cwd, so the ablation
+  runs ended up split between the two roots depending on when they were queued.
+* `optics.py` reads `distorted/sparse/0`, the **fisheye** COLMAP model, not `sparse/0`.
+  `sparse/0` is the 120-degree pinhole undistortion and its points do not reach the
+  periphery, which is exactly the field angle range the whole analysis is about.
+
+`optics.py` is where the physical claim lives: it computes the angular shift a non-central
+camera induces, `z(theta) sin(theta) / t`, and the part of it no central model can remove,
+`z(theta) sin(theta) * sigma(1/t | theta)` — 0.12 to 0.41 px depending on the scene.
+
+Both conversions go through `plate_scale()`, the LOCAL `dr/dtheta`, never the paraxial
+`fx`. On these calibrations `dr/dtheta` drops to 0.56 fx at theta = 90 deg, so using `fx`
+inflates every peripheral pixel figure by ~1.8x. If you add an analysis that converts
+radians to pixels, use `plate_scale()`.
+
 ## Tests
 
 ```bash
-python -m pytest tests/test_ray_gradients.py tests/test_camera_model.py -q   # 15 tests
+python -m pytest tests/test_ray_gradients.py tests/test_camera_model.py -q   # 16 tests
 ```
 
 `pyproject.toml` sets `addopts = "--forked"` (mandatory: two `Raytracer` instances in one

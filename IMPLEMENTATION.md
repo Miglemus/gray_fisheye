@@ -137,6 +137,168 @@ mean averages it down to ~±0.02.
 Levers measured and **rejected**: plain 30k iterations (-0.12 dB, the `scale_decay` trap),
 and per-view `pose_opt` (-0.13 dB on test while train rises).
 
+## RESULTS — `workshop_immervision` (rttpf), the hardest lens available
+
+An **ImmerVision panomorph**: elliptical footprint, anamorphic `f_x/f_y = 1.294`, principal
+point 39 px right / 19 px above centre, local magnification peaking at **1.65x near 60 deg**.
+The prior was that a richer camera should pay off *most* here. It does not, and the honest
+summary is that the gain is the same small one seen on myscenes.
+
+Recipe identical to the published `gray` row (`-r 1` — 1440x1080 is already the working
+resolution — rttpf, batch 2, `--vignetting_comp --vignetting_terms 3`, 15k, same shared EDGS
+init), only `--camera_opt` differs. Shared masked pass, r=0.95 (47.9 % of the frame), n=26:
+
+| method | PSNR | SSIM | LPIPS | FPS | train | #gauss |
+|---|---|---|---|---|---|---|
+| 3DGUT | **25.800** | **0.8534** | 0.3789 | 176 | 733 s | 64 k |
+| **gray + camera model** | 25.363 | 0.8341 | **0.3514** | ~52 | 1249 s | 962 k |
+| gray (published) | 25.220 | 0.8320 | 0.3539 | 123 | 813 s | 973 k |
+| SPaGS | 23.826 | 0.8456 | 0.3773 | 221 | 1373 s | 251 k |
+| DirectFisheye-GS | 20.552 | 0.7891 | 0.4692 | 182 | 2190 s | 131 k |
+
+* **+0.143 dB over published gray, +0.081 over an `off` control run in this worktree**
+  (25.282, which itself reproduces the published 25.220 to within the ±0.06 noise — so the
+  branch's CUDA changes are neutral, as intended). **+0.081 is at the noise floor**: it is
+  one run on one scene and must not be quoted as a real gain on its own.
+* **It does not overturn the ranking.** 3DGUT keeps PSNR (+0.44) and SSIM (+0.019) with
+  **15x fewer gaussians**. The camera model takes **LPIPS outright** (0.3514, best of all
+  five), which is the one honest headline.
+* **The richer lens did not buy a richer gain**, which is the interesting negative result:
+  +0.14 here against +0.44 on the myscenes 7-scene mean. Consistent with the COLMAP finding
+  that rttpf's 8 extra parameters only buy 3 % reprojection on this lens (1.103 -> 1.067 px)
+  — the calibration is already close to saturated, so there is little for a residual to
+  recover. Contrast myscenes, where COLMAP pinned `cx, cy` at the exact sensor centre and
+  never refined them.
+* **The camera model costs ~55 % more training time** (1249 s vs 813 s) and roughly halves
+  render FPS at this resolution, because ray synthesis runs in Python per frame. Both numbers
+  were measured on a shared GPU and are indicative only.
+
+## RESULTS — FullCircle `refit_rttpf`, 9 scenes: the camera model buys nothing
+
+The cleanest negative result of the branch, and the best-controlled: **+0.016 dB** on a
+9-scene paired mean. Worth having precisely because the control is tight enough to say
+"nothing" rather than "we could not tell".
+
+Recipe: byte-for-byte the script that produced the published `gray` row
+(`dataset/fullcircle_code/queue_fullcircle_gray_rttpf.sh` — 15k, `-r 4`, rttpf, batch 2,
+vignetting 3 terms, `--llffhold 0`, person masks, `pruning_min_weight 1e-8`, the track's
+shared `point_cloud.safetensors`), **one flag added**. A `--camera_opt off` control was run
+in this worktree on all 9 scenes, so the comparison is paired and same-code; `gray` is the
+published row, scored by the same shared masked pass.
+
+| | room1 | room2 | room3 | flat1 | flat2 | lab | lounge | dark | persons | mean |
+|---|---|---|---|---|---|---|---|---|---|---|
+| gray (published) | 30.268 | 30.340 | 28.559 | 27.626 | 28.365 | 28.834 | 22.709 | 28.451 | 29.803 | 28.328 |
+| `off` (this worktree) | 30.224 | 30.368 | 28.618 | 27.606 | 28.387 | 28.830 | 22.734 | 28.425 | 29.791 | **28.332** |
+| `noncentral` | 30.282 | 30.422 | 28.607 | 27.600 | 28.382 | 28.816 | 22.754 | 28.491 | 29.770 | **28.347** |
+| *nc − off* | +0.057 | +0.054 | −0.011 | −0.006 | −0.005 | −0.014 | +0.020 | +0.066 | −0.021 | **+0.016** |
+
+* **The `off` control reproduces the published gray row to +0.003 dB on the mean** (and its
+  gaussian counts land within 0.1-1 % — 156 206 vs 156 516 on room1). The branch's CUDA
+  changes are neutral, and the published row is a legitimate baseline for this track.
+* **+0.016 dB, std 0.033 across scenes** (standard error 0.011). Positive on 4 of 9,
+  negative on 5. This is zero.
+* **It does not change the ranking.** SPaGS' fisheye port keeps this track at **28.678**,
+  0.33 dB ahead — the camera model closes none of it. Contrast myscenes, where the same
+  rung took gray from 27.124 past SPaGS' 27.333.
+
+### The residual is doing the right thing, there is just nothing to correct
+
+Per equal-area ring, `noncentral` − `off`, averaged over the 9 scenes
+(`scripts/radial_eval.py --rings 6`):
+
+| ring (r/R) | 0-.41 | .41-.58 | .58-.71 | .71-.82 | .82-.91 | .91-1.0 | disk |
+|---|---|---|---|---|---|---|---|
+| mean | −0.014 | −0.002 | +0.011 | +0.018 | +0.019 | **+0.037** | +0.016 |
+| std | 0.050 | 0.037 | 0.064 | 0.064 | 0.065 | 0.068 | 0.033 |
+
+Monotonically increasing outward — **exactly the peripheral signature the model predicts**,
+and the sign is right. It is simply 35x smaller than `workshop`'s +1.305 on the same ring.
+So this is not a broken rung; it is a rung with nothing to eat.
+
+Two independent measurements say the same thing:
+
+* **The learned residual is ~2.5x smaller than on myscenes.** Checkpoint magnitudes:
+  `theta_weights` 1.1-1.6e-3 here against 4.0e-3 on the myscenes ladder, `z_weights`
+  2.3-3.9e-3 against 6.5e-3. At this plate scale 1.4e-3 rad is about **0.3 px**.
+* **The calibration was already re-bundled with the full rttpf model.** This track is a
+  bundle adjustment that took median reprojection error from 1.102 to 0.866 px
+  (`dataset/fullcircle_baselines/refit_gains.md`), 0.062 px of which came from the rttpf
+  parameters themselves. myscenes, by contrast, ran on a raw COLMAP fit with `cx, cy`
+  pinned at the exact sensor centre and never refined.
+* **It is not an optimisation artefact.** `room2` re-run with all three learning rates at
+  10x (`NAME_SUFFIX=_lr1e3 ... --camera_opt_lr_{tilt,angular,z} 1e-3`) scores **30.398**
+  against 30.422 at the default and 30.368 for `off` — no better, and the learned magnitude
+  does not grow: `theta_weights` 1.32e-3 at lr 1e-3 versus 1.57e-3 at lr 1e-4, i.e.
+  slightly *smaller*. The residual is small because the photometric gradient wants it
+  small, not because the schedule cannot reach further.
+
+The same pattern, weaker, was already visible on `workshop_immervision` (+0.081 over its
+own `off` control, on a lens whose rttpf terms only bought 3 % reprojection). **The rule
+that fits all three datasets: the camera model recovers what the calibration left on the
+table, and nothing more.** It is worth its cost on a raw COLMAP fisheye fit and worth
+nothing on a re-bundled one — which is a useful thing to know before spending it.
+
+Note the principal point is pinned at *exactly* `(1440.0, 1440.0)` for both lenses even
+after the re-fit, so the `tilt` term did still have a free 3 DoF here; it was not enough.
+
+### Cost
+
+| | train | #gauss |
+|---|---|---|
+| `off` | 4:30-5:11 | 62.9k-278k |
+| `noncentral` | 9:12, 9:47 (clean card) | within 1 % of `off` |
+
+**~2.1x training time** for nothing, on this track. The 14-16 min figures in the first
+batch's `time.csv`, and every FPS in it (63 to 245 on comparable scenes), are contention
+artefacts — a foreign process held 12 GB of the same card. Only `dark` and `persons` were
+trained on a card this worktree had to itself. `scripts/measure_fullcircle_fps.sh` re-times
+the whole track, gray included.
+
+### Two traps this track exposed
+
+1. **`radial_eval.py` ignored multi-camera rigs.** It applied `valid_mask.png` — only the
+   FIRST camera's — to every view, though `render.py` also writes `valid_mask_cam<k>.png`
+   and a `masks.json` naming each view's mask. On FullCircle the two lenses' disks differ by
+   1864 px (0.36 % of the frame) **at the rim**, i.e. exactly where the residual acts. The
+   bias cancelled in a rung-vs-rung delta but corrupted absolute numbers. Fixed: per-view
+   masks from `masks.json`, ring geometry from their union so ring k is the same pixels in
+   every run, and a `distinct_masks` field so you can see it engaged. Regression-checked
+   against the single-camera reference: `disk(view)` on `out/tunnel_fisheye_baseline` is
+   still exactly 28.537.
+2. **A pueue group does not reserve a GPU.** Four runs died on OOM 13 s in because a process
+   started outside `gpu1` held 12 GB of it. Queue a free-VRAM wait as well as a group.
+
+## What each term corresponds to physically
+
+Maximum pixel displacement contributed by each azimuthal order, measured from the trained
+checkpoints (`scripts/analysis/fields.py`; local plate scale `dr/dtheta`):
+
+| order | physical cause | atrium | classroom | forest | library | reception | tunnel | workshop |
+|---|---|---|---|---|---|---|---|---|
+| k=0 `s0` | mapping function r(theta) mis-fit | 0.118 | 0.280 | 0.301 | 0.297 | 0.175 | **0.556** | **0.717** |
+| k=1 `s1,s2` | decentred / tilted element | 0.153 | 0.156 | 0.268 | 0.191 | 0.179 | 0.115 | 0.192 |
+| k=2 `s3,s4` | anamorphism (cylindrical stress) | 0.109 | 0.075 | 0.047 | 0.197 | **0.252** | 0.056 | 0.060 |
+| `omega` | global boresight tilt | 0.043 | 0.052 | 0.069 | 0.029 | 0.087 | 0.035 | 0.034 |
+
+k=0 and k=1 correct the same physics as rttpf's `k` and `p` coefficients; what changes is
+the **basis** (a degree-13 global polynomial versus a locally-supported spline).
+
+**k=2 is the only order COLMAP cannot reach.** The obvious objection is that `fx != fy`
+already produces an ellipse — but a *fixed, axis-aligned* one. What is measured is neither:
+on `library` the anamorphic amplitude grows **10.5x** between 30 and 85 degrees, and on
+`atrium` the ellipse axis **rotates by 85 degrees** across the field. A theta-dependent
+orientation cannot be an fx/fy artefact.
+
+`omega` measures 0.03-0.09 px, i.e. nothing, and that is expected: a global tilt is nearly
+degenerate with a rotation of the scene, which the gaussians absorb for free. The `tilt`
+rung scores 27.39 against 27.40 for `off`.
+
+**Do not repeat this mistake:** an earlier version of the report called `forest` the
+anamorphic scene. It is not — `forest`'s non-radial part is dominated by k=1, which is a
+ONE-lobe pattern. The error came from summing |channels 1..4| together, which conflates
+decentring with anamorphism. Separate the orders before attributing a visual structure.
+
 ## LIMITATIONS
 
 1. **SH view directions are not non-central.** `cuda/utils/sh.cu:231,255` bakes per-gaussian
@@ -195,10 +357,94 @@ and per-view `pose_opt` (-0.13 dB on test while train rises).
     all produce byte-identical state_dict schemas, so loading a `noncentral` checkpoint under
     `--camera_opt radial` silently renders a different model. Only `--camera_opt off` fails
     loudly. Register `camera_opt` as a buffer to close this.
-11. **`base_bearings` caches on `(uid, height, width)` only** — not on the camera model,
-    intrinsics or `fov_y`. Within one training run that is safe (one model, one resolution),
-    but multi-eval-mode rendering and the interactive viewer's FoV slider can silently reuse
-    stale bearings.
+11. ~~**`base_bearings` caches on `(uid, height, width)` only**~~ — **FIXED 2026-08-07**, after
+    it silently destroyed a whole baseline. The key now covers everything
+    `upload_camera_intrinsics()` pushes: model, `fov_y`, image size and the intrinsics
+    themselves. See "the stale-bearing collision" under GOTCHAS — this was not hypothetical,
+    it cost `workshop_immervision` 12 dB and it would have been reported as a result.
+
+## Is the gain "the lens is underfit by rttpf"? Measured, and the answer is two-part
+
+`scripts/analysis/calib_consistency.py`. The experiment exists because both datasets
+calibrate **one physical lens independently on every scene** — myscenes' 7 fits all give
+fx = 1240.2 +- 0.9 on the same sensor, FullCircle's 9 re-fits give 781.13 +- 0.18 — so the
+learned residual can be split into a part shared by all scenes and a per-scene part, and
+each can be checked against the calibration it is supposed to be correcting.
+
+Everything in pixels **at the resolution the run was trained at** (`-r 4`, so COLMAP's
+fx 1240 becomes 310), through the LOCAL plate scale `dr/dtheta`, on a common pixel-radius
+grid. Two unit traps, both of which this script fell into before being fixed: quoting
+COLMAP's sensor pixels overstates every figure by **4x** and is the wrong unit anyway,
+since the renderer samples the downsampled grid; and normalising the radius by each
+scene's own `r(theta_max)` pins every scene to the same value at the rim and manufactures
+agreement exactly where the residual acts (it reported 0.000 px of disagreement there).
+
+| | myscenes (1 lens, 7 fits) | FC lens 1 (9 re-fits) | FC lens 2 |
+|---|---|---|---|
+| images per scene | 332 | 1060 | 1060 |
+| cross-scene calibration disagreement, rim | 2.970 px | 1.273 px | 2.393 px |
+| learned residual, **shared** part, rim | **0.393 px** | 0.037 px | 0.035 px |
+| learned residual, per-scene part, rim | 0.233 px | 0.033 px | 0.016 px |
+| shared / per-scene | 1.58 | 1.71 | 1.54 |
+| corr(scene's calib deviation, scene's residual) | **-0.427** | +0.125 | -0.051 |
+| effect on cross-scene spread | **-5.6 %** | +0.9 % | -0.2 % |
+| PSNR gain | +0.33 to +0.44 dB | +0.016 dB | |
+
+Two distinct things are true on myscenes and false on FullCircle:
+
+1. **A systematic ~0.4 px error at the rim, common to all 7 independent fits of the same
+   lens.** That is the honest meaning of "the delivered calibration does not describe this
+   lens". It is **10x smaller** on FullCircle.
+2. **A per-scene error the residual actively cancels.** The correlation between a scene's
+   own calibration deviation and its own learned residual is **-0.427** — the residual
+   points *against* the error of the scene it was trained on. That is also the only reason
+   the cross-scene spread can move at all: a shared component cannot change a standard
+   deviation, so the -5.6 % is entirely this term. On FullCircle the correlation is zero
+   and the spread does not move.
+
+**Cross-scene disagreement alone predicts nothing.** FullCircle's lens 2 disagrees by
+2.39 px, close to myscenes' 2.97, and gains nothing. The predictor is the SHARED bias
+(0.393 vs 0.035 px), not the variance of the fits.
+
+The practical threshold worth remembering: **0.04 px is far below what gray can express** —
+one ray per pixel, `jitter_primary_rays` false, no anti-aliasing anywhere (limitation 3).
+No camera model, however rich, can cash a correction that small.
+
+### MISFIT, not an inexpressive model — and that reframes the whole result
+
+`scripts/analysis/residual_expressible.py`. "The lens is underfit by rttpf" conflates two
+claims, and the data picks one. The learned residual moves each pixel radius `r` from angle
+`theta` to `theta + dtheta`, so the corrected forward map passes through the samples
+`(theta_i + dtheta_i, r_i)`. `r = fx * t * (1 + k1 t^2 + ... + k4 t^8)` is LINEAR in
+`(fx, fx*k1 ... fx*k4)` over the basis `[t, t^3, t^5, t^7, t^9]`, so "could rttpf have
+expressed this?" is an exact least-squares question. Control: the same fit on the
+UNcorrected samples must return ~0, since they were generated by that very form (0.0002 px).
+
+| | correction learned | absorbable by re-fitting rttpf | outside its span |
+|---|---|---|---|
+| myscenes | 0.396 px | **98.6 %** | 0.0054 px rms |
+| FC lens 1 | 0.046 px | 91.0 % | 0.0042 px |
+| FC lens 2 | 0.062 px | 98.8 % | 0.0007 px |
+
+**98.6 % of the radial correction was reachable by moving the k1..k4 COLMAP already had.**
+The model class was adequate; the delivered coefficients were wrong. So the bulk of the
+myscenes gain is **online re-calibration**, not a richer camera: the right rttpf, found by
+photometric descent over whole images instead of reprojection of sparse features. FullCircle
+closes the loop — its explicit bundle re-fit did that job offline, leaving 0.046 px, which
+is why the model finds nothing there.
+
+Combining this with the attribution ladder (tunnel, r4, 15k: `off` 28.49 -> `ana` 28.64 ->
+`noncentral` 28.73), the honest decomposition of the myscenes gain is:
+
+* **~60 % re-calibration** — obtainable with no new model at all, by calibrating better;
+* **~40 % genuine non-centrality** — `z(theta)` moves the ray ORIGIN, which no central model
+  of any polynomial order can express. `optics.py` sizes the irreducible part at
+  0.12-0.41 px.
+
+Two caveats. The 40 % rests on one run on one scene at ~2x the noise floor (see the
+attribution section) and must not be quoted as settled. And "absorbable by re-fitting" is
+**not** "COLMAP would have found it": the two optimise different objectives (photometric
+over all pixels vs reprojection of sparse keypoints) on different data.
 
 ## Where the gain lands: it depends on the scene
 
@@ -210,6 +456,7 @@ Measured per equal-area ring (`scripts/radial_eval.py`, -r 4, 15k, `noncentral` 
 |---|---|---|---|---|---|---|---|
 | `tunnel` | **+0.399** | +0.130 | +0.191 | +0.161 | +0.231 | +0.206 | +0.246 |
 | `workshop` | +0.648 | +0.938 | +0.933 | +0.561 | +0.663 | **+1.305** | +0.743 |
+| `workshop_immervision` (-r 1) | **-0.270** | +0.047 | +0.021 | +0.016 | +0.182 | +0.024 | **-0.002** |
 
 `workshop` is the textbook peripheral profile the model predicts — the outer ring gains
 twice the centre. `tunnel` is the opposite, centre-heavy. So the two scenes are dominated by
@@ -217,6 +464,17 @@ different error modes: on `workshop` by something that grows with field angle (w
 residual is designed for), on `tunnel` by a roughly uniform mis-registration, which the
 3-DoF `tilt` term can absorb and which is plausible given COLMAP pinned `cx, cy` at the
 exact sensor centre on every myscenes scene and never refined them.
+
+**`workshop_immervision` is the null result, and it is worth reading carefully.** On the one
+lens whose geometry most deserves a richer camera, the rung buys *nothing* per pixel: the
+pooled disk delta is **-0.002 dB**, and the centre ring actually loses 0.27. The headline
++0.081 dB comes entirely from the **per-view mean** convention — the gain sits in views that
+already score well, which pooling over all pixels of all views washes out. `radial_eval.py`
+prints both (`disk(pool)` and `disk(view)`); when they disagree in *sign*, as here, the honest
+report is "no effect", not the per-view number. Two candidate explanations, neither tested:
+the calibration is already near-saturated (rttpf's extra parameters buy only 3 % reprojection
+on this lens), and/or the r=0.95 mask keeps just 47.9 % of the frame, so the outer field where
+the residual acts is largely masked away before it is ever scored.
 
 One caveat applies to both: the periphery may not be free to show its full gain, because it
 is reconstruction-starved. The EDGS/RoMa init only covers the central ~120 deg pinhole crop
@@ -227,14 +485,51 @@ pinhole DLT -- is the untested experiment that would settle it.
 
 ## Attribution: is the gain non-centrality, or just parameters?
 
-`tunnel`, -r 4, 15k, identical init and mask, one run each:
+Three scenes, -r 4, 15k, identical init / mask / schedule / frozen poses, one run each.
+Scored with `scratchpad/analysis/rungs.py` (masked PSNR recomputed from the PNGs under the
+shared protocol, NOT the run's own `psnr.csv`; `workshop`'s `off` is the config-fixed
+re-run `tmp/noncentral/fix15k_workshop`, not the misconfigured published baseline):
 
-| rung | test PSNR | vs `off` |
-|---|---|---|
-| `off` | 28.49 | — |
-| `ana` (full central residual) | 28.64 | +0.15 |
-| `central_matched` (same budget as `noncentral`, spent centrally) | 28.60 | +0.11 |
-| `noncentral` | **28.73** | **+0.24** |
+| rung | trained params | tunnel | workshop | reception |
+|---|---|---|---|---|
+| `off` | 0 | 28.537 | 27.198 | 27.277 |
+| `ana` (full central residual) | 103 | 28.638 | 27.297 | 27.618 |
+| `central_matched` (more *central* capacity) | 183 | 28.593 | 27.329 | 27.486 |
+| `noncentral` | 111 | **28.729** | **27.942** | **27.751** |
+
+Differences, and the mean over the three scenes:
+
+| difference | isolates | Δ params | tunnel | workshop | reception | mean |
+|---|---|---|---|---|---|---|
+| `ana − off` | tilt + radial + anamorphic | +103 | +0.100 | +0.099 | +0.340 | +0.180 |
+| `central_matched − ana` | more central capacity | +80 | −0.045 | +0.032 | −0.132 | **−0.048** |
+| `noncentral − ana` | **the z(theta) profile alone** | +8 | +0.091 | +0.645 | +0.134 | **+0.290** |
+| `noncentral − central_matched` | vs the capacity control | −72 | +0.136 | +0.612 | +0.265 | +0.338 |
+| `noncentral − off` | the whole model | +111 | +0.191 | +0.743 | +0.474 | +0.469 |
+
+**The cleanest statement available: +80 central parameters buy −0.048 dB (nothing);
++8 non-central parameters buy +0.290 dB.** `noncentral` beats `central_matched` on all
+three scenes despite training 72 fewer parameters.
+
+`workshop` was the scene predicted in advance to show the largest non-central effect (its
+|z| is 5x `tunnel`'s and its computed irreducible residual, 0.67 px, is the largest of the
+seven) and it does, by 10x the noise floor. The prediction does NOT order the other two:
+`tunnel` has a larger predicted residual than `reception` (0.45 vs 0.29 px) and measures
+less (+0.091 vs +0.134) — but their 0.043 dB difference is below the ±0.06 noise floor, so
+they are indistinguishable. The theory separates `workshop` from the rest; it does not rank
+the rest.
+
+Ring-resolved, `noncentral − ana` (8 equal-area annuli, centre → rim):
+
+```
+workshop   +0.44 +0.70 +0.89 +0.68 +0.40 +0.50 +0.75 +1.37
+reception  +0.03 -0.04 +0.01 +0.27 +0.15 +0.26 +0.57 +0.69
+tunnel     +0.24 +0.12 -0.03 +0.30 +0.26 -0.06 +0.02 +0.00
+```
+
+The two scenes where the term carries weight peak at the outermost ring — the sin(theta)
+growth the model predicts. `tunnel`'s profile is flat: at 1.5x noise there is nothing to
+read into it.
 
 **`central_matched` is NOT parameter-matched — corrected 2026-08-06 after an independent
 audit.** Measured by replaying `LensResidual`: `noncentral` trains **111** parameters,
@@ -245,19 +540,37 @@ wrong.
 
 The bias is **conservative**, so the conclusion survives and in fact strengthens: the
 central control has 65% MORE free parameters than the non-central rung and still scores
-lower (28.60 vs 28.73). Read the row as *"a central model with a larger budget"*, not
-*"the same budget spent centrally"*. Two things follow. First, `central_matched` has
-strictly more parameters than `ana` and does not beat it (28.60 vs 28.64, inside the ±0.06
-noise) — **extra central capacity buys nothing**. Second, the non-central degree of freedom
-adds **+0.13** over a control that was handed more parameters, not fewer.
+lower on every scene. Read the row as *"a central model with a larger budget"*, not
+*"the same budget spent centrally"*. A genuinely parameter-matched control still needs
+building (add 8 knots to `theta_weights` channel 0 only, or drop 4 knots from each of
+theta/phi) — though with `central_matched − ana` measuring −0.048 dB, there is little
+reason to expect a smaller central control to do better.
 
-A genuinely parameter-matched control still needs building (add 8 knots to `theta_weights`
-channel 0 only, or drop 4 knots from each of theta/phi).
+**Still do not over-claim.** Three scenes, one run each, no seed repeats. `workshop` alone
+carries the demonstration (+0.645 dB, 10x noise); on `tunnel` the isolated term is 1.5x
+noise and on `reception` 2.2x. What is safe to say today: the central residual buys
++0.18 dB on average, more central capacity buys nothing further, and the non-central term
+buys another +0.29 dB — but that mean is dominated by one scene, and the share of the
+7-scene +0.333 dB attributable to non-centrality has not been measured. Per-scene shares of
+`noncentral − off` carried by the z term: `workshop` 87%, `tunnel` 47%, `reception` 28%.
 
-**Do not over-claim this.** +0.13 is about 2x the run-to-run noise, from a single run on a
-single scene. It is the right sign and the right control, but a paper claim needs repeats
-across scenes and seeds. What is safe to say today: the central residual buys ~+0.15, more
-central capacity buys nothing further, and the non-central term buys another ~+0.09-0.13.
+**Why the two terms behave differently across scenes** (this is the mechanism, not a
+coincidence): the angular residual is a *calibration* correction, so it lands at roughly
++0.10 dB on both `tunnel` and `workshop`. The non-central term corrects an error that scales
+as `z(theta) sin(theta) / depth`, so it depends on the *scene's* depth distribution and
+varies by 7x between them. A central model can cancel that at one depth and one only; what
+survives is `z(theta) sin(theta) * sigma(1/t | theta)`, measured at 0.12–0.41 px across the
+seven scenes (`scripts/analysis/optics.py`). That is the reason a central control with
+more parameters cannot close the gap.
+
+**Pixel figures use the LOCAL plate scale `dr/dtheta`, not the paraxial `fx`** (corrected
+2026-08-07). The rttpf radial polynomial compresses the rim: `dr/dtheta` falls to ~0.56 fx
+at theta = 90 deg on all seven calibrations, so `fx * angle` overstates every peripheral
+pixel number by ~1.8x. The image-space displacement caused by an angular ray error `d` is
+`dr/dtheta * d`. Affected quantities, old (paraxial) -> new (local): max angular residual
+0.13-1.20 -> **0.12-0.72 px**; irreducible non-central residual at 85 deg 0.20-0.67 ->
+**0.12-0.41 px**; rim disparity spread p05->p95 0.65-3.05 -> **0.36-1.72 px**. No PSNR,
+ring or ablation number is affected -- those are measured, not derived.
 
 ## GOTCHAS (things you would not guess)
 
@@ -292,6 +605,33 @@ central capacity buys nothing further, and the non-central term buys another ~+0
   `scripts/radial_eval.py`, which scores the PNGs, disagreed with `psnr.csv`, which scores
   the live render. **Always cross-check the two.** The fix removes the dependency rather
   than restoring it, and `test_ray_synthesis_does_not_depend_on_scene_scale` pins it.
+* **The stale-bearing collision: two eval models, one cache key (fixed 2026-08-07).** Same
+  family as the `scene_scale` bug above, same detection method, worse blast radius.
+  `base_bearings()` was cached on `(uid, height, width)`. `render.py --eval-models pinhole
+  rad_tan_thin_prism_fisheye` renders BOTH models for the same camera uid in one process, so
+  whichever ran first won the cache and the second silently traced the first one's bearings.
+  On myscenes this never fired, purely by luck: the pinhole copy is 400x266 while the fisheye
+  is 1368x912, so the resolution separated them. On `workshop_immervision` both are
+  **1440x1080** (`undistort_consistent.py --width 1440 --height 1080`), and the fisheye pass
+  re-rendered at **13.31 dB** against the **25.37** the same checkpoint reached live. The
+  training was perfect; only the PNGs everything downstream reads were garbage.
+  Three things make this worth remembering:
+  - **It is invisible to `--camera_opt off`**, which never calls `base_bearings` (native
+    raygen). The control run re-rendered at 25.28 against its own live 25.29, so a
+    control-vs-rung comparison looked like the *rung* had collapsed, not the renderer.
+  - **`psnr.csv` vs `results.json` caught it again.** The live metric and the re-rendered
+    metric disagreeing by 12 dB is the whole signal. Cross-check them on EVERY new scene.
+  - **It is order-dependent**, so it silently vanishes if you render the fisheye first —
+    which is exactly how a "fix" that isn't one gets committed. The real fix is in
+    `raytracer.py:base_bearings`: the key now includes the model, `fov_y`, the image size
+    and the intrinsics.
+
+  **Retro-audit (2026-08-07): nothing else on disk was affected.** The test is free — compare
+  each run's `psnr.csv` test column against its `results.json` fisheye entry. All 7 myscenes
+  `tmp/final/*_noncentral` runs agree to <=0.04 dB, and the 7 `out/fullcircle_rttpf/*` runs to
+  <=0.07 dB (those render a single eval model, so they cannot collide at all). Only
+  `workshop_immervision` ever hit it. Re-run that check on any new scene before trusting a
+  number.
 
 * **Measuring "angular error" with `arccos(dot)` in float32 is misleading.** Near 1 it turns
   a 1e-7 dot-product error into an apparent 5e-4 rad. Use the chord `|a-b|`.

@@ -46,6 +46,14 @@ RUNGS: dict[str, tuple[str, ...]] = {
     "radial": ("tilt", "radial"),
     "ana": ("tilt", "radial", "ana"),
     "noncentral": ("tilt", "radial", "ana", "z"),
+    # * Two *subtractive* rungs, asking whether the non-central term can carry the model on
+    # * its own. They are not part of the cumulative ladder above: they remove capacity that
+    # * `noncentral` has. The point is that z(theta) sin(theta) * E[1/t | theta] -- the mean
+    # * over depth of the shift a non-central pupil induces -- has exactly the form of a
+    # * central radial correction, so `z` and `radial` are NOT orthogonal and `z` can be
+    # * pulled into doing a job it was not meant to do. See IMPLEMENTATION.md.
+    "noncentral_no_ana": ("tilt", "radial", "z"),  # * drop only the anamorphic harmonics
+    "z_only": ("z",),  # * the non-central profile alone, 8 parameters
     # * Parameter-matched central control: same budget as `noncentral`, spent entirely on
     # * central degrees of freedom. Without this the non-central gain is not attributable.
     "central_matched": ("tilt", "radial", "ana", "extra_knots"),

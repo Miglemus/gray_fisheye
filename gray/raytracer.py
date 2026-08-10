@@ -185,11 +185,28 @@ class Raytracer(torch.nn.Module):
         gray/fisheye_geometry.py), we render one throw-away frame with an identity pose and
         read the bearings the raygen actually produced.
 
-        Cached per (camera uid, render resolution): a bearing depends only on the intrinsics
-        and the pixel, never on the pose.
+        Cached on everything `upload_camera_intrinsics()` pushes -- never on the pose, which
+        a bearing does not depend on.
+
+        The key must include the camera MODEL and its intrinsics, not just the uid and the
+        render resolution. `render.py --eval-models pinhole rad_tan_thin_prism_fisheye`
+        renders several camera models for the same camera uid in one process, and on a scene
+        whose pinhole copy happens to have the same pixel size as its fisheye originals
+        (`undistort_consistent.py --width 1440 --height 1080`) a uid+resolution key silently
+        hands the second eval mode the FIRST one's bearings. Measured on
+        `workshop_immervision`, where both are 1440x1080: the fisheye pass re-rendered at
+        13.31 dB against the 25.37 the same model reached live during training. It went
+        unnoticed on myscenes only because there the pinhole copy is 400x266 while the
+        fisheye is 1368x912, so the resolution alone happened to separate them.
         """
         height, width = self.render_height, self.render_width
-        cache_key = (cam_info.uid, height, width)
+        intrinsics = getattr(cam_info, "intrinsics", None)
+        cache_key = (
+            cam_info.uid, height, width,
+            getattr(cam_info, "model", "pinhole"),
+            float(cam_info.fov_y), cam_info.image_width, cam_info.image_height,
+            None if intrinsics is None else tuple(np.asarray(intrinsics).ravel().tolist()),
+        )
         cached = self._base_bearing_cache.get(cache_key)
         if cached is not None:
             return cached

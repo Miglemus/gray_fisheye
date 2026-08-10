@@ -1,0 +1,26 @@
+[
+ {
+  "name": "myscenes (one lens, 7 independent COLMAP fits)",
+  "uid": 1,
+  "total_px": 0.39594760808865515,
+  "control_rms_px": 0.00018167021338128835,
+  "corrected_rms_px": 0.005561379787219122,
+  "inexpressive_px": 0.005379709573837834
+ },
+ {
+  "name": "FullCircle refit_rttpf (lens 1)",
+  "uid": 1,
+  "total_px": 0.04614978123903034,
+  "control_rms_px": 0.0005343708828204808,
+  "corrected_rms_px": 0.0047092523847179334,
+  "inexpressive_px": 0.0041748815018974525
+ },
+ {
+  "name": "FullCircle refit_rttpf (lens 2)",
+  "uid": 2,
+  "total_px": 0.06210062713231063,
+  "control_rms_px": 0.0012147980960374174,
+  "corrected_rms_px": 0.001955551198496738,
+  "inexpressive_px": 0.0007407531024593206
+ }
+]

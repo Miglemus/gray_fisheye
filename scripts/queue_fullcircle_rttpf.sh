@@ -27,6 +27,9 @@ PY=/workspace/gray/.venv/bin/python
 
 name=$scene"_refit_rttpf"
 [ "$rung" = noncentral ] || name="${name}_${rung}"
+# NAME_SUFFIX tags a probe run (different lr, schedule, ...) so it lands in its own dir and
+# is never picked up as the headline `gray-nc` row by masked_eval_rttpf.py.
+name="${name}${NAME_SUFFIX:-}"
 out=out/fullcircle_rttpf/$name
 
 # `off` must not allocate the camera model at all; every other rung unfreezes at 20 % of
@@ -34,7 +37,14 @@ out=out/fullcircle_rttpf/$name
 copt="--camera_opt $rung"
 [ "$rung" = off ] || copt="$copt --camera_opt_from_iter 3000"
 
-pueue add -g "gpu$gpu" --print-task-id -- "cd $WT && \
+# These scenes peak at ~13 GB, and the 2026-08-07 batch lost 4 runs to an OOM 13 s after
+# start: a process OUTSIDE the gpu1 pueue group held 12 GB of the same card. pueue only
+# serialises its own group, so wait for the card to actually be free before allocating.
+# Same guard as dataset/fullcircle_code/queue_fullcircle_gray.sh.
+thr=$([ "$gpu" = 0 ] && echo 9500 || echo 15000)
+guard="for i in \$(seq 1 720); do f=\$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i $gpu); [ \"\$f\" -gt $thr ] && break; sleep 60; done; echo \"GPU$gpu free=\${f}MiB\"; [ \"\$f\" -gt $thr ] || exit 42"
+
+pueue add -g "gpu$gpu" --print-task-id -- "cd $WT && $guard && \
 export CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=$gpu && \
 $PY train.py -s $SRC -r 4 -m $out -y --camera_model rad_tan_thin_prism_fisheye \
   --batch_size 2 --eval --llffhold 0 --vignetting_comp --vignetting_terms 3 \

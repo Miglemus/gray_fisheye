@@ -183,8 +183,19 @@ class RaytracerConfig:
     # *   noncentral      + on-axis entrance-pupil profile z(theta), gauged to z(0) = 0
     # *   central_matched same parameter count as `noncentral`, all of it central
     # *   raxel           dense generic ray field, the upper bound of the ladder
+    # *   noncentral_no_ana  `noncentral` minus the anamorphic harmonics (subtractive)
+    # *   z_only          the non-central profile alone, nothing central (subtractive)
     camera_opt: Literal[
-        "off", "passthrough", "tilt", "radial", "ana", "noncentral", "central_matched", "raxel"
+        "off",
+        "passthrough",
+        "tilt",
+        "radial",
+        "ana",
+        "noncentral",
+        "noncentral_no_ana",
+        "z_only",
+        "central_matched",
+        "raxel",
     ] = "off"
     camera_opt_from_iter: int = 8000  # * Phase A / phase B boundary; frozen before this
     camera_opt_knots: int = 10  # * Control points of the angular residual splines
