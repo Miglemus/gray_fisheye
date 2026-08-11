@@ -160,7 +160,9 @@ done
 ln -sfn /workspace/gray/tmp/noncentral/fix15k_workshop   tmp/r4_paired/workshop_off  # see below
 
 # paired table, re-scored from the PNGs, with the live-vs-rendered cross-check
-python scripts/rttpf_control_table.py --root tmp/r4_paired --rungs off rttpf noncentral
+python scripts/rttpf_control_table.py --root tmp/r4_paired --rungs off rttpf rttpf_z noncentral
+# is the correction rttpf COULD express the one descent FINDS? (expressible vs findable)
+python scripts/analysis/rttpf_span.py --root tmp/r4_paired
 # do the two rungs move the image the same way? (2D fields, not just the radial slice)
 python scripts/analysis/rttpf_fields.py --root tmp/r4_paired
 ```
@@ -184,8 +186,9 @@ Things worth knowing before running it:
   28.17, 1e-5 -> 28.22, 1e-4 -> 28.19, 1e-3 -> **28.24**, 3e-3 -> 28.21. That is a plateau
   inside the +-0.06 noise floor, which is the useful part of the result: **the control is
   not learning-rate starved**, so a shortfall against `noncentral` cannot be blamed on
-  tuning. `config.py` defaults to 1e-5; pass `--camera_opt_lr_intrinsics 1e-3` for the
-  measured optimum.
+  tuning. **`config.py` now defaults to the swept optimum 1e-3**, so no flag is needed --
+  it was 1e-5 while the -r 8 matrix was being run, which is why those runs and the -r 4
+  ones are not directly comparable to each other (each track is internally consistent).
 * **Single-scene -r 8 deltas are near-worthless.** Repeats of the *same* rung land 0.07 dB
   apart, i.e. as far as the effect being measured. The tunnel -r 8 pair happens to show
   `rttpf` recovering ~85 % of the `noncentral` gain; the 7-scene -r 4 paired mean says 25 %.

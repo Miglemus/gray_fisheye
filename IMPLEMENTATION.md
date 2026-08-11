@@ -271,12 +271,41 @@ Every knob that could hobble it was swept (tunnel, -r 8, 7500 it):
 * **intrinsic learning rate**, 7 points: 1e-6 → 28.17, 1e-5 → 28.22, 1e-4 → 28.19,
   **1e-3 → 28.24**, 3e-3 → 28.21, 1e-2 → 28.19, 3e-2 → 28.07 (diverging). A plateau 0.07 dB
   wide — the same size as run-to-run noise. 1e-3 is what the table above uses.
+* **the same learning rate re-swept at -r 4 / 15k**, on the two scenes where `noncentral`
+  wins by the most, because an optimum found at -r 8 / 7500 need not transfer:
+
+  | scene | lr 1e-4 | lr 1e-3 (the table) | lr 1e-2 | `noncentral` |
+  |---|---|---|---|---|
+  | workshop | 27.28 | 27.26 | 27.21 | **27.94** |
+  | classroom | 28.64 | 28.63 | 28.36 | **28.97** |
+
+  Two orders of magnitude of learning rate move the control by ≤ 0.07 dB while `noncentral`
+  stays 0.66 and 0.34 dB ahead. Even a per-scene oracle that picked the best of the three
+  would gain the control 0.02 dB.
 * **unfreeze point**: 0 % → 28.21, 20 % → 28.24, 40 % → 28.21.
 * **noise floor**: repeats of the same rung land 0.07 dB apart (`nc` 28.26/28.19,
   `rttpf` 28.24/28.17), so single-scene deltas at -r 8 are worth little; the 7-scene paired
   mean is the number to read.
 
 No setting of the control's own hyper-parameters comes within 0.2 dB of closing the gap.
+
+**The one objection this does not answer: the control has not converged at 15k, and the
+headline rung has.** Weighted rms displacement of the learned field between the 7500 and
+15000 checkpoints, as a fraction of the field's own magnitude:
+
+| | `noncentral` | `rttpf` |
+|---|---|---|
+| field drift, 7.5k → 15k | 5-47 % (median ~24 %) | **35-146 % (median ~103 %)** |
+| `z` drift | 1-24 % | — |
+
+The intrinsic rung is still moving by about its own size when training stops; the residual
+rung has largely settled. The learning-rate sweep argues against this mattering (10x the
+learning rate does not help and 100x hurts, which is not what a step-starved optimizer looks
+like) but it is not a substitute for more iterations. The *a fortiori* test — all three rungs
+at **30k** with `--scale_decay 0.9999375`, on `workshop` (widest gap) and `tunnel` (where the
+control scores exactly -0.004) — is queued. Until it lands, the honest statement is: **at
+equal budget the control recovers 25 % of the gain**; whether it climbs with more budget is
+open. Credit to the `paper-brainstorm` session for raising this.
 
 ### The two rungs are not finding the same correction
 
@@ -310,20 +339,46 @@ pixels, at the depth the scene actually sits at. It predicts the residual gap:
   and it is an outlier for a mechanical reason: 2.17 px per unit depth but a median depth of
   12.3, the largest of the seven. Dividing by depth puts it back on the line.
 
-The direct decomposition agrees. `rttpf_z` = re-calibration **plus** the non-central term and
-nothing else (tunnel, -r 8, one run per rung, so ±0.07):
+The direct decomposition agrees, and it is the cleanest result on this branch. `rttpf_z` is
+the re-calibration **plus one scalar profile `z(θ)`** and nothing else — no splines, no
+tilt, no anamorphic term. Same seven scenes, same -r 4 / 15k recipe:
 
-| rung | PSNR | delta |
-|---|---|---|
-| off | 28.091 | — |
-| rttpf | 28.148 | +0.057 |
-| **rttpf_z** | **28.258** | **+0.167** |
-| noncentral | 28.254 | +0.164 |
+| scene | off | rttpf | **rttpf_z** | noncentral | d rttpf | **d rttpf_z** | d noncentral |
+|---|---|---|---|---|---|---|---|
+| atrium | 27.878 | 27.933 | 28.004 | 28.036 | +0.055 | +0.126 | +0.158 |
+| classroom | 28.562 | 28.653 | 28.899 | 28.973 | +0.091 | +0.337 | +0.411 |
+| forest | 19.565 | 19.614 | 19.759 | 19.645 | +0.049 | **+0.194** | +0.080 |
+| library | 31.580 | 31.647 | 31.809 | 31.853 | +0.067 | +0.229 | +0.273 |
+| reception | 27.277 | 27.519 | 27.740 | 27.751 | +0.241 | +0.462 | +0.474 |
+| tunnel | 28.537 | 28.533 | 28.732 | 28.729 | -0.004 | +0.195 | +0.191 |
+| workshop | 27.198 | 27.270 | 27.937 | 27.942 | +0.071 | +0.739 | +0.743 |
+| **mean** | **27.228** | **27.310** | **27.554** | **27.561** | **+0.082** | **+0.326** | **+0.333** |
 
-Adding one scalar profile `z(θ)` on top of the re-calibration reproduces the full residual
-model. The gain is the non-central degree of freedom — the thing a re-calibration of a
-*central* model cannot express at any learning rate — not the extra optimizer freedom and
-not the extra parameter count.
+Paired contrasts over the seven scenes:
+
+| contrast | mean | stderr | t | p | Wilcoxon | positive |
+|---|---|---|---|---|---|---|
+| rttpf - off | +0.082 | 0.029 | 2.82 | 0.030 | 0.031 | 6/7 |
+| rttpf_z - rttpf | **+0.244** | 0.074 | 3.31 | 0.016 | 0.016 | **7/7** |
+| noncentral - rttpf | +0.251 | 0.078 | 3.21 | 0.018 | 0.016 | 7/7 |
+| **noncentral - rttpf_z** | **+0.007** | 0.022 | 0.31 | **0.764** | 0.375 | 5/7 |
+
+**Re-calibration plus one scalar `z(θ)` reproduces 98 % of the full camera model**, and the
+difference between them is a statistical zero (+0.007 ± 0.022, p = 0.76; per-scene agreement
+within 0.03 dB on four of seven, and on `forest` the two-term model is 0.114 dB *ahead*).
+Everything the splines add on top — tilt, radial and anamorphic residuals, 100+ parameters —
+is worth nothing once the camera is re-calibrated and allowed one non-central degree of
+freedom.
+
+So the gain is the non-central degree of freedom: the thing a re-calibration of a *central*
+model cannot express at any learning rate. Not the extra optimizer freedom, and not the
+extra parameter count — `rttpf_z` has 17 trained camera parameters against `noncentral`'s
+111 and matches it.
+
+(The earlier single-scene version of this table, tunnel at -r 8: off 28.091, rttpf 28.148,
+rttpf_z 28.258, noncentral 28.254. Same conclusion, but both intrinsic rungs there ran at
+lr 1e-5, the default at the time, so those rows are comparable to each other and not to the
+-r 4 table.)
 
 ## RESULTS — `workshop_immervision` (rttpf), the hardest lens available
 
@@ -616,17 +671,62 @@ closes the loop — its explicit bundle re-fit did that job offline, leaving 0.0
 is why the model finds nothing there.
 
 Combining this with the attribution ladder (tunnel, r4, 15k: `off` 28.49 -> `ana` 28.64 ->
-`noncentral` 28.73), the honest decomposition of the myscenes gain is:
+`noncentral` 28.73), this section originally concluded a **~60 % re-calibration / ~40 %
+non-centrality** split.
 
-* **~60 % re-calibration** — obtainable with no new model at all, by calibrating better;
-* **~40 % genuine non-centrality** — `z(theta)` moves the ray ORIGIN, which no central model
-  of any polynomial order can express. `optics.py` sizes the irreducible part at
-  0.12-0.41 px.
+> **SUPERSEDED — the split is ~25 / 75, measured directly.** The inference above goes from
+> *"the correction lies inside rttpf's span"* to *"most of the gain is re-calibration"*, and
+> that step does not hold. `--camera_opt rttpf` performs the re-calibration instead of
+> arguing about it and recovers **+0.082 of the +0.333 dB** over seven scenes (see "RESULTS
+> — the re-calibration control"). Expressibility was never in question; **photometric value
+> was**, and the two are not the same quantity.
 
-Two caveats. The 40 % rests on one run on one scene at ~2x the noise floor (see the
-attribution section) and must not be quoted as settled. And "absorbable by re-fitting" is
-**not** "COLMAP would have found it": the two optimise different objectives (photometric
-over all pixels vs reprojection of sparse keypoints) on different data.
+`scripts/analysis/rttpf_span.py` closes the loop by projecting the learned *central* field
+(all azimuthal orders, `z` excluded) onto the span of all 16 rttpf parameters, using the
+renderer's own solver linearized one coefficient at a time:
+
+| scene | \|residual\| px | explained, 2D | best-fit px | what descent learned, px | found/best |
+|---|---|---|---|---|---|
+| atrium | 0.108 | 0.77 | 0.095 | 0.211 | 2.23 |
+| classroom | 0.234 | 0.96 | 0.228 | 0.281 | 1.23 |
+| forest | 0.320 | 0.99 | 0.319 | 0.082 | 0.26 |
+| library | 0.306 | 0.80 | 0.275 | 0.264 | 0.96 |
+| reception | 0.208 | 0.76 | 0.182 | 0.216 | 1.19 |
+| tunnel | 0.366 | 0.99 | 0.364 | 0.174 | 0.48 |
+| workshop | 0.616 | 1.00 | 0.615 | 0.314 | 0.51 |
+| **mean** | **0.308** | **0.90** | **0.297** | **0.220** | 0.98 |
+
+Two things to read off it, and they point the same way:
+
+* **The span claim survives — but re-derive it from here, not from the 98.6 %.** 90 % of the
+  central correction really is reachable with the 16 parameters COLMAP already ships. The
+  98.6 % figure above should not be quoted: `residual_expressible.py` imports
+  `calib_consistency.py`, whose `RADIAL = [4, 5, 8, 9]` is **wrong for rttpf** — that index
+  set is the 12-parameter `THIN_PRISM_FISHEYE` layout, and its comment says so. rttpf's six
+  radial coefficients are **consecutive at 4..9** (`cuda/core/rtpf.cuh:33` evaluates
+  `1 + k0 t^2 + ... + k5 t^12`, a degree-13 map). The number is therefore doubly compromised:
+  its basis `[t, t^3, t^5, t^7, t^9]` truncates a degree-13 polynomial at degree 9, and its
+  `r_of_theta` / `theta_of_r` geometry is built from the wrong four coefficients. The
+  `paper-brainstorm` session measured the geometric consequence: `S/fx` at 85.5 deg spreads
+  1.12x across the 7 myscenes fits under `[4,5,8,9]` against 1.01x under the correct `[4:10]`
+  — truncating anywhere manufactures rim noise. **Nothing in this branch inherits it**:
+  `rttpf_fields.plate_scale` loops `params[4+index]` over `range(6)` and `rttpf_span.py`
+  imports from there, so both the 90 % and the field tables above are computed on the correct
+  polynomial.
+* **And it does not matter.** Descent lands nowhere near the projection: the `found/best`
+  column scatters from 0.26 to 2.23 (the mean of 0.98 is an averaging artefact), and the
+  field comparison shows cosines around zero. The re-calibration is not a worse version of
+  the same correction, and being able to express the central part buys +0.08 dB.
+
+So the corrected reading is not "expressible therefore worth 60 %". It is: **the central
+part of the correction is largely expressible by rttpf and is worth about a quarter of the
+gain; the non-central part is expressible by nothing central and is worth the other three
+quarters** — which is what `rttpf_z` reproducing `noncentral` on tunnel, and the r = 0.93
+correlation with `z` at scene depth, both say independently.
+
+One caveat carried over unchanged: "absorbable by re-fitting" is **not** "COLMAP would have
+found it": the two optimise different objectives (photometric over all pixels vs
+reprojection of sparse keypoints) on different data.
 
 ## Where the gain lands: it depends on the scene
 
@@ -835,6 +935,17 @@ ring or ablation number is affected -- those are measured, not derived.
 
 ## Pre-existing issues found (not caused by this branch)
 
+* **`scripts/analysis/calib_consistency.py:54` has `RADIAL = [4, 5, 8, 9]`, which is the
+  wrong index set for rttpf** — it is the `THIN_PRISM_FISHEYE` (12-parameter) layout, and the
+  comment above it describes that model. rttpf's six radial coefficients are consecutive at
+  **4..9**. Everything downstream of its `radial_poly` / `r_of_theta` / `theta_of_r` /
+  `plate_scale` is affected, including `residual_expressible.py` (which `import`s it) and
+  therefore the **98.6 % "absorbable by re-fitting" figure** — see the SUPERSEDED note under
+  "Is the gain the lens is underfit by rttpf". Found by the `paper-brainstorm` session, whose
+  three-way cross-check (analytic 0.632, numeric differentiation of the real projection
+  0.638, an independent agent 0.633) settles the correct value. **Not fixed here** — it is
+  another branch's script and other sessions consume it; fix it there, and re-derive any
+  number that came out of it. Nothing in this branch imports it.
 * `tests/test_single_gaussian.py`, `tests/test_multiple_gaussians.py`,
   `tests/test_fisheye_mask.py` — **5 tests fail on `main` too** (`mock_camera` has no
   `origin_cuda`, etc.). Untouched here.

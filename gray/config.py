@@ -211,10 +211,12 @@ class RaytracerConfig:
     camera_opt_lr_angular: float = 1e-4
     camera_opt_lr_z: float = 1e-4  # * In units of the scene radius, so scene-scale free
     camera_opt_lr_raxel: float = 1e-4
-    # * In units of the NORMALIZED image plane (~ fx pixels), so it is resolution-free:
-    # * 1e-5 moves the worst-affected pixel by about 0.003 px per step at -r 4. Swept on
-    # * tunnel (-r 8, 7500 it) -- see PROTOCOL.md, the intrinsic rung's own recipe table.
-    camera_opt_lr_intrinsics: float = 1e-5
+    # * In units of the NORMALIZED image plane (~ fx pixels), so it is resolution-free.
+    # * The default IS the swept optimum: 7 points on tunnel (-r 8, 7500 it) give a plateau
+    # * 1e-6..1e-2 only 0.07 dB wide, peaking here and diverging at 3e-2 (PROTOCOL.md).
+    # * Keep it a default rather than a flag -- this rung is a fairness control, and it must
+    # * not be possible to handicap it by forgetting to pass its learning rate.
+    camera_opt_lr_intrinsics: float = 1e-3
     camera_opt_lr_final_mult: float = 0.1  # * Exponential decay applied over phase B
     camera_opt_reg_l2: float = 1e-2
     camera_opt_reg_curvature: float = 1e-2
