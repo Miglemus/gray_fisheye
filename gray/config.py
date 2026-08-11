@@ -183,8 +183,23 @@ class RaytracerConfig:
     # *   noncentral      + on-axis entrance-pupil profile z(theta), gauged to z(0) = 0
     # *   central_matched same parameter count as `noncentral`, all of it central
     # *   raxel           dense generic ray field, the upper bound of the ladder
+    # *   noncentral_no_ana  `noncentral` minus the anamorphic harmonics (subtractive)
+    # *   z_only          the non-central profile alone, nothing central (subtractive)
+    # *   rttpf           re-fit COLMAP's own 16 rttpf parameters photometrically (control)
+    # *   rttpf_z         + the non-central profile, on top of the re-fitted calibration
     camera_opt: Literal[
-        "off", "passthrough", "tilt", "radial", "ana", "noncentral", "central_matched", "raxel"
+        "off",
+        "passthrough",
+        "tilt",
+        "radial",
+        "ana",
+        "noncentral",
+        "noncentral_no_ana",
+        "z_only",
+        "central_matched",
+        "raxel",
+        "rttpf",
+        "rttpf_z",
     ] = "off"
     camera_opt_from_iter: int = 8000  # * Phase A / phase B boundary; frozen before this
     camera_opt_knots: int = 10  # * Control points of the angular residual splines
@@ -196,9 +211,16 @@ class RaytracerConfig:
     camera_opt_lr_angular: float = 1e-4
     camera_opt_lr_z: float = 1e-4  # * In units of the scene radius, so scene-scale free
     camera_opt_lr_raxel: float = 1e-4
+    # * In units of the NORMALIZED image plane (~ fx pixels), so it is resolution-free:
+    # * 1e-5 moves the worst-affected pixel by about 0.003 px per step at -r 4. Swept on
+    # * tunnel (-r 8, 7500 it) -- see PROTOCOL.md, the intrinsic rung's own recipe table.
+    camera_opt_lr_intrinsics: float = 1e-5
     camera_opt_lr_final_mult: float = 0.1  # * Exponential decay applied over phase B
     camera_opt_reg_l2: float = 1e-2
     camera_opt_reg_curvature: float = 1e-2
+    # * Off by default: the 16 rttpf parameters are the model the baseline already trusts,
+    # * so pulling them back towards the COLMAP fit would handicap the control.
+    camera_opt_reg_intrinsics: float = 0.0
     camera_opt_raxel_stride: int = 8  # * Ray-field grid is (H // stride, W // stride)
 
     # * Per-view SE(3) pose residual. Reported separately: it does NOT transfer to held-out

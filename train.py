@@ -59,6 +59,14 @@ if scene.test_cameras:
         test_cam0 = {cam.image_name: cam for cam in scene.test_cameras}[cfg.preview_test_image_name]
 eval_modes = cfg.resolved_eval_modes()
 validate_eval_modes(eval_modes, cfg.camera_model)
+# * The intrinsic rung re-fits RAD_TAN_THIN_PRISM_FISHEYE parameters; on any other camera it
+# * is silently inert, which would look like "re-calibration buys nothing" rather than like
+# * a misconfiguration. Fail here instead.
+if cfg.camera_opt.startswith("rttpf") and cfg.camera_model != "rad_tan_thin_prism_fisheye":
+    raise SystemExit(
+        f"--camera_opt {cfg.camera_opt} requires --camera_model rad_tan_thin_prism_fisheye "
+        f"(got '{cfg.camera_model}'): there would be no rttpf parameters to re-fit."
+    )
 training_eval_mode = cfg.camera_model
 eval_views = {}
 for mode in eval_modes:
@@ -301,6 +309,28 @@ while iteration < cfg.iterations + 1:
                                 f"{profile[index].item():.9e}",
                                 file=camera_log,
                             )
+                # * The rttpf rung leaves every spline at zero, so the CSV above is empty
+                # * for it; what it learns is a delta on COLMAP's own 16 parameters.
+                intrinsic_rows = raytracer.camera_model.intrinsic_report()
+                if intrinsic_rows:
+                    path = os.path.join(cfg.model_path, f"camera_intrinsics_{iteration:05d}.csv")
+                    with open(path, "w") as intrinsics_log:
+                        print("uid,height,width,name,colmap,delta,coefficient", file=intrinsics_log)
+                        for row in intrinsic_rows:
+                            print(
+                                f"{row[0]},{row[1]},{row[2]},{row[3]},"
+                                f"{row[4]:.9e},{row[5]:.9e},{row[6]:.9e}",
+                                file=intrinsics_log,
+                            )
+                    # * Worst-pixel residual of the quasi-Newton unprojection. If this ever
+                    # * leaves the 1e-3 px range the solve stopped converging and the
+                    # * rendered camera is no longer the one the parameters describe.
+                    residual = raytracer.camera_model.last_newton_residual
+                    if residual is not None:
+                        writer.add_scalar(
+                            "camera_model/newton_residual_px", float(residual), iteration
+                        )
+
                 margin = raytracer.camera_model.monotonicity_margin()
                 writer.add_scalar("camera_model/monotonicity_margin", margin, iteration)
                 if margin < 0.0:

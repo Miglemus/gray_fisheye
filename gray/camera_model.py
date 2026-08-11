@@ -46,11 +46,44 @@ RUNGS: dict[str, tuple[str, ...]] = {
     "radial": ("tilt", "radial"),
     "ana": ("tilt", "radial", "ana"),
     "noncentral": ("tilt", "radial", "ana", "z"),
+    # * Two *subtractive* rungs, asking whether the non-central term can carry the model on
+    # * its own. They are not part of the cumulative ladder above: they remove capacity that
+    # * `noncentral` has. The point is that z(theta) sin(theta) * E[1/t | theta] -- the mean
+    # * over depth of the shift a non-central pupil induces -- has exactly the form of a
+    # * central radial correction, so `z` and `radial` are NOT orthogonal and `z` can be
+    # * pulled into doing a job it was not meant to do. See IMPLEMENTATION.md.
+    "noncentral_no_ana": ("tilt", "radial", "z"),  # * drop only the anamorphic harmonics
+    "z_only": ("z",),  # * the non-central profile alone, 8 parameters
     # * Parameter-matched central control: same budget as `noncentral`, spent entirely on
     # * central degrees of freedom. Without this the non-central gain is not attributable.
     "central_matched": ("tilt", "radial", "ana", "extra_knots"),
     "raxel": ("tilt", "raxel"),
+    # * The calibration control: re-fit the 16 COLMAP RAD_TAN_THIN_PRISM_FISHEYE parameters
+    # * themselves, photometrically, during training. It answers "is the gain a richer
+    # * camera, or merely a camera that was allowed to move?" -- everything the residual
+    # * rungs get (gradient descent, the same schedule, the same freeze) inside the model
+    # * class the baseline already uses. See IMPLEMENTATION.md.
+    "rttpf": ("rttpf",),
+    "rttpf_z": ("rttpf", "z"),  # * re-calibration AND non-centrality, to separate the two
 }
+
+# * COLMAP's RAD_TAN_THIN_PRISM_FISHEYE parameter list, in order
+# * (colmap/src/colmap/sensor/models.h:629; gray's cuda/core/rtpf.cuh matches it exactly).
+RTTPF_NAMES = (
+    "fx", "fy", "cx", "cy",
+    "k0", "k1", "k2", "k3", "k4", "k5",
+    "p0", "p1",
+    "s0", "s1", "s2", "s3",
+)
+NUM_RTTPF_PARAMS = len(RTTPF_NAMES)
+# * Finite-difference steps used ONCE, to measure each distortion coefficient's effect on
+# * the normalized image plane. They only have to be small against the curvature of the
+# * projection, never against the parameter itself -- p and s are frequently exactly zero
+# * in a COLMAP fit, so a relative step would be zero.
+RTTPF_FD_STEP = (1e-5,) * 6 + (1e-6,) * 6
+# * Quasi-Newton iterations of the unprojection. The first ones only refine the value and
+# * run under no_grad; the last one carries the gradient (see `rttpf_solve`).
+RTTPF_NEWTON_STEPS = 4
 
 # * Harmonic channels for the angular residuals: k=0 (radial), then cos/sin of phi and 2phi.
 RADIAL_CHANNELS = 1
@@ -134,6 +167,197 @@ def bspline_subdivide(weights: torch.Tensor) -> torch.Tensor:
     return out
 
 
+def rttpf_project(w: torch.Tensor, params: torch.Tensor) -> torch.Tensor:
+    """Fisheye-plane point `w = theta * (cos phi, sin phi)` -> pixel, gray's rttpf model.
+
+    The forward direction of `cuda/core/rtpf.cuh` line for line, which is itself COLMAP's
+    `RadTanThinPrismFisheyeModel::Distortion` + `ImgFromFisheye`. gray's raygen only ever
+    needs the *backward* map and inverts this with a 100-step fixed point; we only ever
+    need the forward one, because `rttpf_solve` gets the inverse by Newton from a base
+    bearing that is already the answer for the unperturbed parameters.
+    """
+    uu, vv = w.unbind(-1)
+    theta2 = uu * uu + vv * vv
+    radial = torch.ones_like(uu)
+    power = torch.ones_like(uu)
+    for index in range(6):
+        power = power * theta2
+        radial = radial + params[4 + index] * power
+    x = radial * uu
+    y = radial * vv
+    x2, y2, xy = x * x, y * y, x * y
+    r2 = x2 + y2
+    r4 = r2 * r2
+    x_distorted = x + 2.0 * params[11] * xy + params[10] * (r2 + 2.0 * x2)
+    y_distorted = y + 2.0 * params[10] * xy + params[11] * (r2 + 2.0 * y2)
+    x_distorted = x_distorted + params[12] * r2 + params[13] * r4
+    y_distorted = y_distorted + params[14] * r2 + params[15] * r4
+    return torch.stack(
+        [params[0] * x_distorted + params[2], params[1] * y_distorted + params[3]], dim=-1
+    )
+
+
+def rttpf_plate_scales(w: torch.Tensor, params: torch.Tensor):
+    """Newton preconditioner at `w`: d(normalized image) / d(w), radial term only.
+
+    In polar coordinates the projection is `rho(theta) = theta * g(theta)` times the focal
+    length, so the Jacobian is `diag(rho', rho/theta)` in the (radial, tangential) frame.
+    Dropping the tangential and thin-prism cross terms costs a little convergence rate and
+    nothing else, since the iteration is run to a fixed point.
+
+    It has to be re-evaluated at every step rather than frozen at the base bearing: on these
+    calibrations `rho''/rho' ~ -1.9 per radian at the rim (the degree-13 polynomial turns
+    over there), so a Jacobian frozen 0.1 rad away converges only linearly, at rate ~0.25.
+    Measured: 4 frozen steps left 5e-3 px of residual on a deliberately large perturbation.
+    """
+    theta2 = (w * w).sum(-1)
+    growth = torch.ones_like(theta2)  # * g(theta) = rho / theta
+    slope = torch.ones_like(theta2)  # * rho'(theta)
+    power = torch.ones_like(theta2)
+    for index in range(6):
+        power = power * theta2
+        growth = growth + params[4 + index] * power
+        slope = slope + (2 * index + 3) * params[4 + index] * power
+    # * The radial unit vector is arbitrary at the centre, where both scales tend to 1 and
+    # * the update degenerates to -residual however it is decomposed.
+    unit = w / w.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    return unit, 1.0 / slope.clamp_min(1e-3), 1.0 / growth.clamp_min(1e-3)
+
+
+def rttpf_normalization(params: torch.Tensor):
+    """Per-parameter scale that turns the 16 intrinsics into one comparable coefficient.
+
+    A coefficient of 1.0 displaces the worst-affected pixel of this lens by one unit of the
+    NORMALIZED image plane (i.e. by about `fx` pixels). Two reasons for that convention:
+
+    * **A single learning rate has to mean the same thing for all 16.** They span nine
+      orders of magnitude (`fx` ~ 1e3 against `s1` ~ 1e-4) and, more to the point, a unit of
+      `k0` moves the image ~1e3 times further than a unit of `cx`. Adam normalizes the
+      gradient but not the *step*, so without this the rung would either not move at all or
+      diverge, and the answer it gives to "can re-calibration match the residual model?"
+      would be about the parameterization rather than about the lens.
+    * **It must not depend on the render resolution.** The focal / principal-point channels
+      are therefore expressed relative to `fx, fy`, the distortion channels are measured on
+      the normalized plane, and the field they are maximized over is the analytic quarter
+      turn rather than the pixel grid -- a coarser grid samples a slightly different largest
+      theta, and the degree-13 polynomial turns that into 5 % on the high-order channels.
+      What is left depends only on the twelve dimensionless coefficients, so the same
+      checkpoint is the same lens at any render size. Storing a pixel-calibrated coefficient
+      instead is the `scene_scale` trap of IMPLEMENTATION.md: right during training and
+      silently wrong in every re-rendered PNG.
+    """
+    theta = torch.linspace(0.0, math.pi / 2.0, 512, dtype=torch.float64, device=params.device)
+    phi = torch.linspace(0.0, 2.0 * math.pi, 33, dtype=torch.float64, device=params.device)[:-1]
+    grid = torch.stack(
+        [(theta.unsqueeze(1) * phi.cos()).reshape(-1), (theta.unsqueeze(1) * phi.sin()).reshape(-1)],
+        dim=-1,
+    )
+    normalized = params.to(torch.float64).clone()
+    normalized[0] = 1.0
+    normalized[1] = 1.0
+    normalized[2] = 0.0
+    normalized[3] = 0.0
+    base = rttpf_project(grid, normalized)  # * (x_distorted, y_distorted)
+    scales = torch.ones(NUM_RTTPF_PARAMS, dtype=torch.float64, device=params.device)
+    # * d(x_pix)/d(fx) = x_distorted, and the focal channel is parameterized as fx * c, so
+    # * the normalized displacement is c * x_distorted. Same for fy; the principal point
+    # * moves the image by exactly its own step, hence a scale of 1.
+    scales[0] = base[:, 0].abs().max()
+    scales[1] = base[:, 1].abs().max()
+    for index, step in enumerate(RTTPF_FD_STEP):
+        bumped = normalized.clone()
+        bumped[4 + index] += step
+        moved = (rttpf_project(grid, bumped) - base).norm(dim=-1).max() / step
+        scales[4 + index] = moved
+    return scales.clamp_min(1e-12).to(torch.float32)
+
+
+def rttpf_tables(base: dict, params: torch.Tensor) -> dict:
+    """Everything the rttpf rung needs that depends only on (camera, resolution).
+
+    `w0` is the base bearing written in the fisheye plane, `target` the pixel it came from
+    -- recomputed with the same torch code that the solve uses, never the pixel grid, so
+    that a zero coefficient gives a *bitwise* zero residual and the rung is exactly the
+    native path at initialization.
+    """
+    bearings = base["bearings"]
+    bearing_x, bearing_y, bearing_z = bearings.unbind(-1)
+    radius = torch.sqrt(bearing_x * bearing_x + bearing_y * bearing_y)
+    theta = torch.atan2(radius, bearing_z)
+    # * w = theta * (cos phi, sin phi), written as (bx, by) * theta / sin(theta) so that the
+    # * centre pixel -- where phi is undefined and radius is 0 -- stays finite (limit 1).
+    sin_theta = torch.sin(theta)
+    ratio = torch.where(sin_theta > 1e-9, theta / sin_theta.clamp_min(1e-9), torch.ones_like(theta))
+    w0 = torch.stack([bearing_x * ratio, bearing_y * ratio], dim=-1)
+    return {
+        "params": params,
+        "w0": w0,
+        "norm0": w0.norm(dim=-1),
+        "target": rttpf_project(w0, params),
+        "scales": rttpf_normalization(params),
+    }
+
+
+def rttpf_delta_params(coefficients: torch.Tensor, table: dict) -> torch.Tensor:
+    "Learned coefficients -> a delta on the 16 COLMAP parameters, in their own units."
+    params = table["params"]
+    delta = coefficients / table["scales"]
+    focal = torch.stack([params[0], params[1], params[0], params[1]])
+    # * The focal and principal-point channels are relative to fx, fy (see
+    # * rttpf_normalization); the twelve distortion coefficients are already dimensionless.
+    return torch.cat([delta[:4] * focal, delta[4:]])
+
+
+def rttpf_solve(coefficients: torch.Tensor, table: dict):
+    """Unproject every pixel through the *perturbed* rttpf model, as (d_theta, d_phi).
+
+    Returned as a rotation of the base bearing rather than as a new bearing, so the caller
+    can reuse the exact-at-zero rotation machinery: `d_theta` is a difference of two norms
+    and `d_phi` an `atan2` of a cross/dot product, both of which are *bitwise* zero when the
+    solve returns `w0`, which it does when the coefficients are zero.
+
+    Only the last iteration carries the gradient. The first ones refine the value under
+    `no_grad`, which keeps one projection graph instead of `RTTPF_NEWTON_STEPS` of them (a
+    few hundred MB at 1368x912) and leaves the gradient exact up to the quasi-Newton
+    preconditioner, i.e. a ~1% error on the *direction* of a step Adam renormalizes anyway.
+    """
+    params = table["params"] + rttpf_delta_params(coefficients, table)
+    w0, target = table["w0"], table["target"]
+    frozen = params.detach()
+    inv_focal = torch.stack([1.0 / frozen[0], 1.0 / frozen[1]])
+
+    def newton(current, active):
+        with torch.no_grad():
+            radial_unit, inv_slope, inv_growth = rttpf_plate_scales(current.detach(), frozen)
+        residual = (rttpf_project(current, active) - target) * inv_focal
+        radial = (residual * radial_unit).sum(-1)
+        tangential = residual - radial.unsqueeze(-1) * radial_unit
+        step = radial_unit * (radial * inv_slope).unsqueeze(-1) + tangential * inv_growth.unsqueeze(-1)
+        return current - step
+
+    with torch.no_grad():
+        current = w0
+        for _ in range(RTTPF_NEWTON_STEPS - 1):
+            current = newton(current, params)
+        residual_px = ((rttpf_project(current, params) - target).norm(dim=-1)).max()
+    solved = newton(current, params)
+
+    delta_theta = solved.norm(dim=-1) - table["norm0"]
+    solved_x, solved_y = solved.unbind(-1)
+    base_x, base_y = w0.unbind(-1)
+    # * atan2(0, 0) is 0 but its gradient is 0/0. Both arguments vanish wherever the base
+    # * bearing does -- outside the lens disk, and on the optical axis itself -- so the
+    # * denominator is forced to 1 there. The value is unchanged (the numerator is exactly
+    # * zero at those pixels) and the gradient becomes finite; it is then multiplied by an
+    # * upstream zero, since rotating a zero bearing cannot move anything.
+    dot = base_x * solved_x + base_y * solved_y
+    delta_phi = torch.atan2(
+        base_x * solved_y - base_y * solved_x,
+        torch.where(table["norm0"] <= 0.0, torch.ones_like(dot), dot),
+    )
+    return delta_theta, delta_phi, residual_px
+
+
 def skew_rotate(omega: torch.Tensor, vectors: torch.Tensor) -> torch.Tensor:
     """Rodrigues rotation of [..., 3] vectors by an axis-angle vector.
 
@@ -167,6 +391,11 @@ class LensResidual(nn.Module):
         self.theta_weights = nn.Parameter(torch.zeros(TOTAL_CHANNELS, knots, device="cuda"))
         self.phi_weights = nn.Parameter(torch.zeros(TOTAL_CHANNELS, knots, device="cuda"))
         self.z_weights = nn.Parameter(torch.zeros(1, num_knots_z, device="cuda"))
+        # * Registered ONLY for the rttpf rungs, unlike the tensors above: every existing
+        # * checkpoint was written without it and `load_state_dict` is strict, so allocating
+        # * it unconditionally would make every `noncentral` run on disk unrenderable.
+        if "rttpf" in self.components:
+            self.intrinsics = nn.Parameter(torch.zeros(NUM_RTTPF_PARAMS, device="cuda"))
 
     def active_channels(self) -> list[int]:
         channels = []
@@ -190,6 +419,10 @@ class LensResidual(nn.Module):
             )
         if "z" in self.components:
             groups.append({"params": [self.z_weights], "lr": lrs["z"], "name": "z"})
+        if "rttpf" in self.components:
+            groups.append(
+                {"params": [self.intrinsics], "lr": lrs["intrinsics"], "name": "intrinsics"}
+            )
         return groups
 
     def harmonics(self, spline_values: torch.Tensor, cos_phi, sin_phi) -> torch.Tensor:
@@ -206,9 +439,14 @@ class LensResidual(nn.Module):
             total = term if total is None else total + term
         return total
 
-    def regularization(self, l2: float, curvature: float) -> torch.Tensor:
+    def regularization(self, l2: float, curvature: float, intrinsics_l2: float = 0.0):
         """L2 towards zero plus a second-difference (curvature) penalty on the splines."""
         loss = self.omega.new_zeros(())
+        if "rttpf" in self.components and intrinsics_l2 > 0.0:
+            # * Its own coefficient: the spline weights are radians (~1e-3) while these are
+            # * normalized-plane units, so sharing `reg_l2` would penalize them ~1e6 times
+            # * harder and the control would lose by construction.
+            loss = loss + intrinsics_l2 * self.intrinsics.square().sum()
         tensors = []
         if self.active_channels():
             channels = self.active_channels()
@@ -280,6 +518,11 @@ class CameraModel(nn.Module):
         self.optimizer = torch.optim.Adam([{"params": [], "lr": 0.0, "name": "placeholder"}])
         self._theta_max = math.pi / 2.0
         self._basis_cache = {}
+        self._rttpf_cache = {}
+        self._rttpf_warned = set()
+        # * Worst-pixel Newton residual of the last solve, kept as a tensor so that reading
+        # * it never forces a GPU sync inside the training loop. train.py logs it.
+        self.last_newton_residual = None
 
     def spline_basis(self, base: dict, num_ctrl: int) -> torch.Tensor:
         "Cached [N, K] B-spline basis for this camera/resolution and control-point count."
@@ -287,6 +530,31 @@ class CameraModel(nn.Module):
         if cache_key not in self._basis_cache:
             self._basis_cache[cache_key] = build_bspline_basis(base["theta01"], num_ctrl)
         return self._basis_cache[cache_key]
+
+    def rttpf_table(self, base: dict):
+        """Cached per-(camera, resolution) tables for the intrinsic rung, or None.
+
+        None for any camera that is not a RAD_TAN_THIN_PRISM_FISHEYE -- there is nothing to
+        re-fit then. That is not hypothetical: `render.py --eval-models pinhole rttpf`
+        re-renders the pinhole crop of every run with the camera model attached, and the
+        pinhole camera has no rttpf parameters to move. Those renders are therefore the
+        *uncorrected* camera; only the fisheye pass is ever scored (PROTOCOL.md).
+        """
+        key = base["cache_key"]
+        if key in self._rttpf_cache:
+            return self._rttpf_cache[key]
+        model, intrinsics = base.get("model"), base.get("intrinsics")
+        if model != "rad_tan_thin_prism_fisheye" or intrinsics is None:
+            if key not in self._rttpf_warned:
+                self._rttpf_warned.add(key)
+                print(
+                    f"[camera_opt] rung '{self.rung}' is inert on camera model '{model}' "
+                    "(no rttpf intrinsics to re-fit); rendering the delivered camera."
+                )
+            self._rttpf_cache[key] = None
+            return None
+        self._rttpf_cache[key] = rttpf_tables(base, intrinsics)
+        return self._rttpf_cache[key]
 
     # ------------------------------------------------------------------ parameter blocks
 
@@ -301,6 +569,7 @@ class CameraModel(nn.Module):
                 "tilt": self.cfg.camera_opt_lr_tilt,
                 "angular": self.cfg.camera_opt_lr_angular,
                 "z": self.cfg.camera_opt_lr_z * self.scene_scale,
+                "intrinsics": self.cfg.camera_opt_lr_intrinsics,
             }
             for group in lens.parameter_groups(lrs):
                 group["name"] = f"{group['name']}:{key}"
@@ -387,6 +656,14 @@ class CameraModel(nn.Module):
             delta_theta = lens.harmonics(spline_theta, base["cos_phi"], base["sin_phi"])
             delta_phi = lens.harmonics(spline_phi, base["cos_phi"], base["sin_phi"])
 
+        if "rttpf" in lens.components:
+            table = self.rttpf_table(base)
+            if table is not None:
+                fitted_theta, fitted_phi, residual = rttpf_solve(lens.intrinsics, table)
+                self.last_newton_residual = residual
+                delta_theta = fitted_theta if delta_theta is None else delta_theta + fitted_theta
+                delta_phi = fitted_phi if delta_phi is None else delta_phi + fitted_phi
+
         if "raxel" in lens.components:
             field = self.raxel_field(cam_info.uid, height, width)
             sampled = torch.nn.functional.interpolate(
@@ -449,9 +726,37 @@ class CameraModel(nn.Module):
         loss = torch.zeros((), device="cuda")
         for lens in self.lenses.values():
             loss = loss + lens.regularization(
-                self.cfg.camera_opt_reg_l2, self.cfg.camera_opt_reg_curvature
+                self.cfg.camera_opt_reg_l2,
+                self.cfg.camera_opt_reg_curvature,
+                self.cfg.camera_opt_reg_intrinsics,
             )
         return loss
+
+    def intrinsic_report(self):
+        """(uid, height, width, name, colmap value, learned delta, coefficient) per parameter.
+
+        The delta is in COLMAP's own units *at the render resolution* -- fx and the
+        principal point scale with it, the twelve distortion coefficients do not.
+        """
+        rows = []
+        for key, lens in self.lenses.items():
+            if "rttpf" not in lens.components:
+                continue
+            for cache_key, table in self._rttpf_cache.items():
+                if table is None or str(cache_key[0]) != key:
+                    continue
+                with torch.no_grad():
+                    delta = rttpf_delta_params(lens.intrinsics, table)
+                columns = zip(
+                    RTTPF_NAMES,
+                    table["params"].tolist(),
+                    delta.tolist(),
+                    lens.intrinsics.tolist(),
+                )
+                for name, value, shift, coefficient in columns:
+                    rows.append((key, cache_key[1], cache_key[2], name, value, shift, coefficient))
+                break
+        return rows
 
     def set_frozen(self, frozen: bool):
         self.frozen = frozen
@@ -466,6 +771,8 @@ class CameraModel(nn.Module):
                 base_lr = self.cfg.camera_opt_lr_angular
             elif name.startswith("z:"):
                 base_lr = self.cfg.camera_opt_lr_z * self.scene_scale
+            elif name.startswith("intrinsics"):
+                base_lr = self.cfg.camera_opt_lr_intrinsics
             elif name.startswith("raxel"):
                 base_lr = self.cfg.camera_opt_lr_raxel
             elif name.startswith("poseR"):

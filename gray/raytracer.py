@@ -151,22 +151,32 @@ class Raytracer(torch.nn.Module):
     def init_exposure_comp(self, scene_info: SceneInfo):
         self.exposure_comp = ExposureComp(self.cfg, scene_info)
 
+    def scaled_intrinsics(self, cam_info: CameraInfo):
+        """(model, intrinsics at the active render resolution) -- None for a pinhole camera.
+
+        Intrinsics are stored for the full image; only the focal length and the principal
+        point rescale, the distortion coefficients act on normalized coordinates.
+        """
+        from gray.camera_models import normalize_gray_model
+
+        model = normalize_gray_model(getattr(cam_info, "model", "pinhole"))
+        if model not in ["opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]:
+            return model, None
+        intrinsics = cam_info.intrinsics_cuda().clone()
+        scale_x = self.render_width / cam_info.image_width
+        scale_y = self.render_height / cam_info.image_height
+        intrinsics[0] *= scale_x  # fx
+        intrinsics[2] *= scale_x  # cx
+        intrinsics[1] *= scale_y  # fy
+        intrinsics[3] *= scale_y  # cy
+        return model, intrinsics
+
     def upload_camera_intrinsics(self, cam_info: CameraInfo):
         "Push the camera model and its intrinsics, rescaled to the active render resolution."
         camera = self.cuda_module.get_camera()
         camera.vertical_fov_radians.fill_(cam_info.fov_y)
-        from gray.camera_models import normalize_gray_model
-
-        model = normalize_gray_model(getattr(cam_info, "model", "pinhole"))
-        if model in ["opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]:
-            # * Intrinsics are stored for the full image; rescale to the active render resolution
-            intrinsics = cam_info.intrinsics_cuda().clone()
-            scale_x = self.render_width / cam_info.image_width
-            scale_y = self.render_height / cam_info.image_height
-            intrinsics[0] *= scale_x  # fx
-            intrinsics[2] *= scale_x  # cx
-            intrinsics[1] *= scale_y  # fy
-            intrinsics[3] *= scale_y  # cy
+        model, intrinsics = self.scaled_intrinsics(cam_info)
+        if intrinsics is not None:
             if model == "opencv_fisheye":
                 camera.set_opencv_fisheye(intrinsics)
             elif model == "thin_prism_fisheye":
@@ -185,11 +195,28 @@ class Raytracer(torch.nn.Module):
         gray/fisheye_geometry.py), we render one throw-away frame with an identity pose and
         read the bearings the raygen actually produced.
 
-        Cached per (camera uid, render resolution): a bearing depends only on the intrinsics
-        and the pixel, never on the pose.
+        Cached on everything `upload_camera_intrinsics()` pushes -- never on the pose, which
+        a bearing does not depend on.
+
+        The key must include the camera MODEL and its intrinsics, not just the uid and the
+        render resolution. `render.py --eval-models pinhole rad_tan_thin_prism_fisheye`
+        renders several camera models for the same camera uid in one process, and on a scene
+        whose pinhole copy happens to have the same pixel size as its fisheye originals
+        (`undistort_consistent.py --width 1440 --height 1080`) a uid+resolution key silently
+        hands the second eval mode the FIRST one's bearings. Measured on
+        `workshop_immervision`, where both are 1440x1080: the fisheye pass re-rendered at
+        13.31 dB against the 25.37 the same model reached live during training. It went
+        unnoticed on myscenes only because there the pinhole copy is 400x266 while the
+        fisheye is 1368x912, so the resolution alone happened to separate them.
         """
         height, width = self.render_height, self.render_width
-        cache_key = (cam_info.uid, height, width)
+        intrinsics = getattr(cam_info, "intrinsics", None)
+        cache_key = (
+            cam_info.uid, height, width,
+            getattr(cam_info, "model", "pinhole"),
+            float(cam_info.fov_y), cam_info.image_width, cam_info.image_height,
+            None if intrinsics is None else tuple(np.asarray(intrinsics).ravel().tolist()),
+        )
         cached = self._base_bearing_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -234,8 +261,14 @@ class Raytracer(torch.nn.Module):
         cos_phi = torch.where(valid, bearing_x / safe_radius, zeros)
         sin_phi = torch.where(valid, bearing_y / safe_radius, zeros)
         theta = torch.atan2(radius, bearing_z)
+        model, scaled = self.scaled_intrinsics(cam_info)
         base = {
             "bearings": bearings,
+            # * The calibration these bearings came from, at THIS render resolution: what
+            # * the rttpf rung re-fits. Part of the base dict rather than re-derived in the
+            # * camera model so that the two can never disagree about the scaling.
+            "model": model,
+            "intrinsics": scaled,
             # * Axis of the meridional rotation; orthogonal to the bearing by construction.
             "meridian": torch.stack([-sin_phi, cos_phi, zeros], dim=-1),
             "theta01": (theta / (math.pi / 2.0)).clamp(0.0, 1.0),
