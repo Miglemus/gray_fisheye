@@ -24,6 +24,11 @@ CameraOptRung = Literal[
     "z_only",
     "central_matched",
     "raxel",
+    # * The two rungs merged from `rttpf-intrinsics`. They do NOT add a residual on top of
+    # * COLMAP's calibration -- they re-fit the calibration itself, which is what makes
+    # * `rttpf_z` the structural twin of `aspect_noncentral` on pinhole.
+    "rttpf",
+    "rttpf_z",
 ]
 
 # * The four per-lens tensors of `gray.camera_model.LensResidual`, in checkpoint order.
@@ -227,6 +232,8 @@ class RaytracerConfig:
     # *   raxel           dense generic ray field, the upper bound of the ladder
     # *   noncentral_no_ana  `noncentral` minus the anamorphic harmonics (subtractive)
     # *   z_only          the non-central profile alone, nothing central (subtractive)
+    # *   rttpf           re-fit COLMAP's own 16 rttpf parameters photometrically (control)
+    # *   rttpf_z         + the non-central profile, on top of the re-fitted calibration
     camera_opt: CameraOptRung = "off"
     camera_opt_from_iter: int = 8000  # * Phase A / phase B boundary; frozen before this
     camera_opt_knots: int = 10  # * Control points of the angular residual splines
@@ -238,9 +245,18 @@ class RaytracerConfig:
     camera_opt_lr_angular: float = 1e-4
     camera_opt_lr_z: float = 1e-4  # * In units of the scene radius, so scene-scale free
     camera_opt_lr_raxel: float = 1e-4
+    # * In units of the NORMALIZED image plane (~ fx pixels), so it is resolution-free.
+    # * The default IS the swept optimum: 7 points on tunnel (-r 8, 7500 it) give a plateau
+    # * 1e-6..1e-2 only 0.07 dB wide, peaking here and diverging at 3e-2 (PROTOCOL.md).
+    # * Keep it a default rather than a flag -- this rung is a fairness control, and it must
+    # * not be possible to handicap it by forgetting to pass its learning rate.
+    camera_opt_lr_intrinsics: float = 1e-3
     camera_opt_lr_final_mult: float = 0.1  # * Exponential decay applied over phase B
     camera_opt_reg_l2: float = 1e-2
     camera_opt_reg_curvature: float = 1e-2
+    # * Off by default: the 16 rttpf parameters are the model the baseline already trusts,
+    # * so pulling them back towards the COLMAP fit would handicap the control.
+    camera_opt_reg_intrinsics: float = 0.0
     camera_opt_raxel_stride: int = 8  # * Ray-field grid is (H // stride, W // stride)
 
     # * ---------------------------------------------------------------- camera-model transfer

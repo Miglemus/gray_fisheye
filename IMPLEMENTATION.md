@@ -1156,3 +1156,274 @@ under that line by the origin shift would show up as a "coherence cost" on its o
   `batch_size=1` while the other six scenes used `True`/`2`. Re-running it matched
   (15k, same everything else) scores **27.18 against 26.47**, i.e. **+0.71 dB** was lost to a
   configuration slip on gray's *worst* scene relative to SPaGS.
+
+<!-- ===== merged from branch `rttpf-intrinsics` on 2026-08-12 ===== -->
+*The two sections below arrived with the `rttpf` / `rttpf_z` rungs. They were
+written in the `rttpf-intrinsics` worktree; paths and worktree names in them refer
+to that worktree and are kept verbatim rather than rewritten, so the provenance of
+each measurement stays checkable.*
+
+## The re-calibration control — `--camera_opt rttpf`
+
+### Why it exists
+
+Every rung above learns *something the baseline camera cannot express*, and is compared
+against a baseline whose camera is **frozen at the COLMAP fit**. Two explanations of the
+myscenes gain survive that comparison:
+
+1. the non-central model is richer, or
+2. the non-central model was **allowed to move during training and the baseline was not**.
+
+`residual_expressible.py` already argued for (2) offline — 98.6 % of the learned radial
+correction lies in the span of rttpf's own `k0..k5` — but that is a statement about what a
+re-fit *could* reach, not about what photometric descent *does* reach. The direct experiment
+is to hand the optimizer COLMAP's own 16 parameters and change nothing else.
+
+### How it works
+
+The rung learns a delta on `fx, fy, cx, cy, k0..k5, p0, p1, s0..s3` and expresses it, like
+every other rung, as a rotation of the base bearing. The chain, per pixel:
+
+```
+base bearing b0  --(theta/sin theta)-->  w0 = theta (cos phi, sin phi)     [fisheye plane]
+target pixel p   =  project(w0, colmap_params)                            [cached, exact]
+solve           project(w, colmap_params + delta) = p     by Newton on w
+rotation        d_theta = |w| - |w0|,  d_phi = angle(w0 -> w)  --> the existing rotations
+```
+
+Four things about that are load-bearing:
+
+* **Only the forward map is implemented.** gray's raygen inverts rttpf with a 100-step
+  fixed-point iteration; re-implementing *that* in torch (and differentiating through it)
+  would be a second source of truth for the camera model. Newton needs only
+  `rttpf_project`, which is COLMAP's `Distortion` transcribed once.
+* **The target pixel is `project(w0, colmap_params)`, not the pixel grid.** It makes a zero
+  coefficient give a *bitwise* zero rotation, so the rung is exactly `off` at init in the
+  same sense every other rung is — and it inherits the raygen's own solver error instead of
+  competing with it. (Measured: the two agree to 1e-5 px anyway.)
+* **The Jacobian must be recomputed at each Newton step.** Frozen at the base bearing it
+  converges only *linearly*, at rate ~0.25, because `rho''/rho' ~ -1.9 per radian at the rim
+  where the degree-13 polynomial turns over. That cost 1.4e-3 rad of error on a large
+  perturbation — 300x the tolerance — and is the one non-obvious thing in the file.
+* **The 16 coefficients are normalized**, each to "one unit of normalized-plane displacement
+  at the worst-affected pixel", on an analytic theta grid rather than the pixel grid. They
+  span nine orders of magnitude and a unit of `k0` moves the image ~1000x further than a
+  unit of `cx`; Adam normalizes the gradient but not the step, so without this a single
+  learning rate cannot be fair to all 16. Doing the normalization on the *pixel* grid
+  instead makes a coefficient mean 5 % more at a different render resolution
+  (`test_rttpf_coefficients_mean_the_same_lens_at_any_resolution` pins this).
+
+`test_rttpf_reproduces_the_cuda_unprojection_of_a_perturbed_calibration` is the test that
+makes the control legitimate: it writes a perturbed calibration straight into `cam_info`,
+probes the *native* raygen with it, and requires the rung's rays to match — 4.6e-6 rad on a
+perturbation 100x larger than training ever applies, which is the float32 noise floor of the
+reference itself (a float64 solve of the same equation lands at 4.7e-6 from the raygen).
+
+### Cost and caveats
+
+* **~2.6x the training time of `off`** (tunnel, -r 8, 7500 it: 6:30 against 2:31; the
+  `noncentral` rung is 5:00). Four Newton steps of a ~30-kernel projection per rendered
+  frame, launch-bound rather than flop-bound. Two steps would converge for perturbations
+  this small; four is kept because a diverging run must not also silently stop solving.
+* **The rung is inert on any camera that is not RAD_TAN_THIN_PRISM_FISHEYE**, and says so
+  once per camera. `train.py` refuses to start in that case, but `render.py --eval-models
+  pinhole rttpf` legitimately hits it: the *pinhole* re-render of an rttpf run is the
+  uncorrected camera. Only the fisheye pass is ever scored, so this affects nothing that is
+  reported — but do not read a pinhole number off one of these runs.
+* `monotonicity_margin()` returns 1.0 for this rung (it inspects the splines, which stay at
+  zero). The Newton residual in the tensorboard log is the equivalent health signal:
+  anything above ~1e-3 px means the solve stopped converging.
+
+## RESULTS — the re-calibration control: does the gain survive it?
+
+The objection this branch exists to answer: `noncentral` is optimized by gradient descent
+during training and every rival is frozen at its COLMAP fit, so the win could be *"one
+method got to move its camera"* rather than *"one method has a better camera model"*.
+`--camera_opt rttpf` removes that asymmetry — it hands the **baseline's own 16-parameter
+rttpf calibration** to the same optimizer, on the same schedule, in the same renderer.
+
+Seven myscenes, -r 4, 15k iterations, unfreeze at 20 %, everything but `--camera_opt`
+identical, all three rungs starting from the same cached `point_cloud.safetensors`. Scored
+from the PNGs by `scripts/rttpf_control_table.py` (shared 0.95 mask, `disk_per_view_mean`):
+
+| scene | off (frozen COLMAP) | rttpf (re-calibrated) | noncentral | d rttpf | d noncentral | nc - rttpf |
+|---|---|---|---|---|---|---|
+| atrium | 27.878 | 27.933 | 28.036 | +0.055 | +0.158 | +0.102 |
+| classroom | 28.562 | 28.653 | 28.973 | +0.091 | +0.411 | +0.319 |
+| forest | 19.565 | 19.614 | 19.645 | +0.049 | +0.080 | +0.031 |
+| library | 31.580 | 31.647 | 31.853 | +0.067 | +0.273 | +0.206 |
+| reception | 27.277 | 27.519 | 27.751 | +0.241 | +0.474 | +0.233 |
+| tunnel | 28.537 | 28.533 | 28.729 | -0.004 | +0.191 | +0.195 |
+| workshop | 27.198 | 27.270 | 27.942 | +0.071 | +0.743 | +0.672 |
+| **mean** | **27.228** | **27.310** | **27.561** | **+0.082** | **+0.333** | **+0.251** |
+
+**Re-calibration is real but small: +0.082 dB (stderr 0.029, positive on 6/7).** It recovers
+**25 %** of the camera model's +0.333. `noncentral` still beats the re-calibrated control by
+**+0.251 dB, stderr 0.078, on 7/7 scenes** — so the answer to "is it just optimization?" is
+no: about a quarter of the headline gain is the freedom to move the camera at all, and three
+quarters needs the *shape* of the model.
+
+Note the `off` column here uses the fixed `workshop` configuration (27.198, not the
+published 26.470), so this table's +0.333 is the camera model alone with the configuration
+fix already removed — consistent with the decomposition above.
+
+### The control is not under-tuned
+
+Every knob that could hobble it was swept (tunnel, -r 8, 7500 it):
+
+* **intrinsic learning rate**, 7 points: 1e-6 → 28.17, 1e-5 → 28.22, 1e-4 → 28.19,
+  **1e-3 → 28.24**, 3e-3 → 28.21, 1e-2 → 28.19, 3e-2 → 28.07 (diverging). A plateau 0.07 dB
+  wide — the same size as run-to-run noise. 1e-3 is what the table above uses.
+* **the same learning rate re-swept at -r 4 / 15k**, on the two scenes where `noncentral`
+  wins by the most, because an optimum found at -r 8 / 7500 need not transfer:
+
+  | scene | lr 1e-4 | lr 1e-3 (the table) | lr 1e-2 | `noncentral` |
+  |---|---|---|---|---|
+  | workshop | 27.28 | 27.26 | 27.21 | **27.94** |
+  | classroom | 28.64 | 28.63 | 28.36 | **28.97** |
+
+  Two orders of magnitude of learning rate move the control by ≤ 0.07 dB while `noncentral`
+  stays 0.66 and 0.34 dB ahead. Even a per-scene oracle that picked the best of the three
+  would gain the control 0.02 dB.
+* **unfreeze point**: 0 % → 28.21, 20 % → 28.24, 40 % → 28.21.
+* **noise floor**: repeats of the same rung land 0.07 dB apart (`nc` 28.26/28.19,
+  `rttpf` 28.24/28.17), so single-scene deltas at -r 8 are worth little; the 7-scene paired
+  mean is the number to read.
+
+No setting of the control's own hyper-parameters comes within 0.2 dB of closing the gap.
+
+**The one objection this does not answer: the control has not converged at 15k, and the
+headline rung has.** Weighted rms displacement of the learned field between the 7500 and
+15000 checkpoints, as a fraction of the field's own magnitude:
+
+| | `noncentral` | `rttpf` |
+|---|---|---|
+| field drift, 7.5k → 15k | 5-47 % (median ~24 %) | **35-146 % (median ~103 %)** |
+| `z` drift | 1-24 % | — |
+
+The intrinsic rung is still moving by about its own size when training stops; the residual
+rung has largely settled. The learning-rate sweep argues against this mattering (10x the
+learning rate does not help and 100x hurts, which is not what a step-starved optimizer looks
+like) but it is not a substitute for more iterations. Credit to the `paper-brainstorm` session
+for raising it.
+
+**The *a fortiori* test settles it: 30k, `--scale_decay 0.9999375` (the documented fix for
+the per-iteration trap), same four rungs, on `workshop` (widest gap) and `tunnel` (where the
+control scored exactly -0.004 at 15k).**
+
+| scene / rung | 15k | 30k | budget effect |
+|---|---|---|---|
+| tunnel / off | 28.537 | 28.616 | +0.079 |
+| tunnel / rttpf | 28.533 | 28.735 | +0.201 |
+| tunnel / rttpf_z | 28.732 | 28.732 | -0.000 |
+| tunnel / noncentral | 28.729 | 28.814 | +0.086 |
+| workshop / off | 27.198 | 27.303 | +0.105 |
+| workshop / rttpf | 27.270 | 27.423 | +0.153 |
+| workshop / rttpf_z | 27.937 | 28.139 | +0.201 |
+| workshop / noncentral | 27.942 | 28.104 | +0.162 |
+
+Three things, in decreasing order of confidence:
+
+1. **The under-training objection is dead.** At doubled budget `noncentral - rttpf` is still
+   +0.080 (tunnel) and +0.681 (workshop). The control does not catch up.
+2. **The 25 % figure is budget-dependent and must be quoted as "at 15k".** `rttpf - off` goes
+   -0.004 -> +0.119 and +0.071 -> +0.120. Note the two 30k values agree to 0.001 dB across
+   two very different scenes, which looks like a systematic lens re-calibration worth a
+   scene-independent ~0.12 dB rather than a scene-dependent effect. If that holds on the
+   other five, the converged re-calibration share is ~0.12/0.36 ~ **33 %**, not 25 % and not
+   the 40-45 % a naive extrapolation of the two deltas suggests. **Not measured — do not
+   quote either extrapolation.**
+3. **`rttpf_z == noncentral` is established at 15k and simply not yet tested at 30k.** Mean
+   PSNR difference over the two 30k scenes is -0.024 (workshop +0.035, tunnel -0.082). Two
+   scenes at ~1.3x the 0.06 dB noise floor cannot establish or refute a tie either way. **The
+   7-scene tie at 15k (p = 0.76) stands; a 30k tie needs the other five scenes.**
+
+   Across all three metrics at 30k, nothing separates the two models consistently — PSNR
+   splits by scene, SSIM favours `noncentral` by 0.0003 on both, LPIPS is a wash:
+
+   | 30k | PSNR | SSIM | LPIPS |
+   |---|---|---|---|
+   | tunnel: rttpf_z / noncentral | 28.7320 / **28.8143** | 0.95442 / **0.95477** | **0.15474** / 0.15483 |
+   | workshop: rttpf_z / noncentral | **28.1387** / 28.1036 | 0.95685 / **0.95712** | 0.17165 / **0.17159** |
+
+   **Do not repeat the reading this section carried first**, that `tunnel/rttpf_z` "gained
+   nothing from the doubled budget" because its PSNR read 28.7321 at 15k and 28.7320 at 30k.
+   Only the *PSNR* coincided. Its SSIM moved +0.00147 and its LPIPS -0.00268, both inside the
+   range of the other seven runs (+0.00147..+0.00229 and -0.00189..-0.00841). It is an
+   ordinary run and a ~1 % coincidence over eight pairs, not an anomaly. Caught by the
+   `paper-brainstorm` session; confirmed here independently. The lesson is the general one:
+   **a single metric agreeing to 4 decimal places is a coincidence to check against the other
+   metrics, not evidence about the run** — and the check costs one script.
+
+### The two rungs are not finding the same correction
+
+`scripts/analysis/rttpf_fields.py` compares the actual per-pixel displacement each rung
+applies (both fields produced by the renderer's own code, on an analytic θ/φ grid). If the
+re-calibration were merely a clumsier route to the same correction, the fields would be
+parallel. They are not:
+
+| scene | \|rttpf\| px | \|nc\| px | cos | explained | z at scene depth px |
+|---|---|---|---|---|---|
+| atrium | 0.119 | 0.103 | +0.21 | -0.83 | 0.122 |
+| classroom | 0.178 | 0.127 | -0.15 | -2.37 | 0.209 |
+| forest | 0.068 | 0.171 | +0.08 | -0.09 | 0.176 |
+| library | 0.129 | 0.169 | -0.64 | -1.56 | 0.160 |
+| reception | 0.124 | 0.159 | +0.13 | -0.41 | 0.207 |
+| tunnel | 0.112 | 0.194 | -0.19 | -0.55 | 0.167 |
+| workshop | 0.159 | 0.326 | -0.87 | -1.08 | 0.683 |
+
+Cosines scatter around zero (three are strongly *negative*) and the explained fraction is
+negative on all seven: the re-calibration does not approximate the residual model, it applies
+an unrelated small correction that happens to also help a little.
+
+### What the extra 0.251 dB actually is
+
+The last column above is the non-central `z(θ)` displacement at the rim, divided by each
+scene's own median point-to-camera distance — i.e. the image-space shift the term buys, in
+pixels, at the depth the scene actually sits at. It predicts the residual gap:
+
+* `z at scene depth` vs (nc - rttpf): **Pearson r = 0.93, p = 0.003**.
+* Without the depth normalization it is only r = 0.72, p = 0.066 — `forest` is the outlier,
+  and it is an outlier for a mechanical reason: 2.17 px per unit depth but a median depth of
+  12.3, the largest of the seven. Dividing by depth puts it back on the line.
+
+The direct decomposition agrees, and it is the cleanest result on this branch. `rttpf_z` is
+the re-calibration **plus one scalar profile `z(θ)`** and nothing else — no splines, no
+tilt, no anamorphic term. Same seven scenes, same -r 4 / 15k recipe:
+
+| scene | off | rttpf | **rttpf_z** | noncentral | d rttpf | **d rttpf_z** | d noncentral |
+|---|---|---|---|---|---|---|---|
+| atrium | 27.878 | 27.933 | 28.004 | 28.036 | +0.055 | +0.126 | +0.158 |
+| classroom | 28.562 | 28.653 | 28.899 | 28.973 | +0.091 | +0.337 | +0.411 |
+| forest | 19.565 | 19.614 | 19.759 | 19.645 | +0.049 | **+0.194** | +0.080 |
+| library | 31.580 | 31.647 | 31.809 | 31.853 | +0.067 | +0.229 | +0.273 |
+| reception | 27.277 | 27.519 | 27.740 | 27.751 | +0.241 | +0.462 | +0.474 |
+| tunnel | 28.537 | 28.533 | 28.732 | 28.729 | -0.004 | +0.195 | +0.191 |
+| workshop | 27.198 | 27.270 | 27.937 | 27.942 | +0.071 | +0.739 | +0.743 |
+| **mean** | **27.228** | **27.310** | **27.554** | **27.561** | **+0.082** | **+0.326** | **+0.333** |
+
+Paired contrasts over the seven scenes:
+
+| contrast | mean | stderr | t | p | Wilcoxon | positive |
+|---|---|---|---|---|---|---|
+| rttpf - off | +0.082 | 0.029 | 2.82 | 0.030 | 0.031 | 6/7 |
+| rttpf_z - rttpf | **+0.244** | 0.074 | 3.31 | 0.016 | 0.016 | **7/7** |
+| noncentral - rttpf | +0.251 | 0.078 | 3.21 | 0.018 | 0.016 | 7/7 |
+| **noncentral - rttpf_z** | **+0.007** | 0.022 | 0.31 | **0.764** | 0.375 | 5/7 |
+
+**Re-calibration plus one scalar `z(θ)` reproduces 98 % of the full camera model**, and the
+difference between them is a statistical zero (+0.007 ± 0.022, p = 0.76; per-scene agreement
+within 0.03 dB on four of seven, and on `forest` the two-term model is 0.114 dB *ahead*).
+Everything the splines add on top — tilt, radial and anamorphic residuals, 100+ parameters —
+is worth nothing once the camera is re-calibrated and allowed one non-central degree of
+freedom.
+
+So the gain is the non-central degree of freedom: the thing a re-calibration of a *central*
+model cannot express at any learning rate. Not the extra optimizer freedom, and not the
+extra parameter count — `rttpf_z` has 17 trained camera parameters against `noncentral`'s
+111 and matches it.
+
+(The earlier single-scene version of this table, tunnel at -r 8: off 28.091, rttpf 28.148,
+rttpf_z 28.258, noncentral 28.254. Same conclusion, but both intrinsic rungs there ran at
+lr 1e-5, the default at the time, so those rows are comparable to each other and not to the
+-r 4 table.)

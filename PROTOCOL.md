@@ -487,3 +487,78 @@ iteration-matched gray run, because `scale_decay` is per-iteration: the default 
 gaussians 0.153x over 15k but 0.0235x over 30k. Measured on `tunnel`, plain 30k scored
 **28.42 against 28.54 at 15k**. Pass `--scale_decay 0.9999375` for a 30k run with the same
 total shrink.
+
+<!-- ===== merged from branch `rttpf-intrinsics` on 2026-08-12 ===== -->
+*The two sections below arrived with the `rttpf` / `rttpf_z` rungs. They were
+written in the `rttpf-intrinsics` worktree; paths and worktree names in them refer
+to that worktree and are kept verbatim rather than rewritten, so the provenance of
+each measurement stays checkable.*
+
+## The re-calibration control (`--camera_opt rttpf`)
+
+The question it exists to answer: how much of the `noncentral` gain is the *model* and how
+much is simply that the camera was allowed to move? It re-fits COLMAP's own 16
+RAD_TAN_THIN_PRISM_FISHEYE parameters photometrically, with the same schedule and the same
+freeze point as every residual rung.
+
+```bash
+# one scene, sweep resolution / iterations exposed
+bash scripts/train_myscenes_at.sh tunnel tmp/probe/tunnel_rttpf 8 7500 \
+    --camera_opt rttpf --camera_opt_from_iter 1500 [--camera_opt_lr_intrinsics 1e-3]
+
+# the whole scene x rung matrix, with the VRAM guard and the 20 % freeze point
+bash scripts/queue_rttpf_control.sh tmp/r4_control 4 15000 1 rttpf,rttpf_z
+
+# the r4 rungs live in three different roots; the table script takes one, so alias them
+mkdir -p tmp/r4_paired
+for s in atrium classroom forest library reception tunnel workshop; do
+  ln -sfn /workspace/gray/tmp/final/${s}_noncentral      tmp/r4_paired/${s}_noncentral
+  ln -sfn "$PWD/tmp/r4_control/${s}_rttpf"               tmp/r4_paired/${s}_rttpf
+  ln -sfn /workspace/gray/out/${s}_fisheye_baseline      tmp/r4_paired/${s}_off
+done
+ln -sfn /workspace/gray/tmp/noncentral/fix15k_workshop   tmp/r4_paired/workshop_off  # see below
+
+# paired table, re-scored from the PNGs, with the live-vs-rendered cross-check
+python scripts/rttpf_control_table.py --root tmp/r4_paired --rungs off rttpf rttpf_z noncentral
+# is the correction rttpf COULD express the one descent FINDS? (expressible vs findable)
+python scripts/analysis/rttpf_span.py --root tmp/r4_paired
+# do the two rungs move the image the same way? (2D fields, not just the radial slice)
+python scripts/analysis/rttpf_fields.py --root tmp/r4_paired
+```
+
+**`workshop_off` must be `tmp/noncentral/fix15k_workshop`, not the published baseline.**
+The published `out/workshop_fisheye_baseline` was trained without `vignetting_comp` and at
+`batch_size 1`; pairing against it credits the control with +0.73 dB of configuration fix
+that has nothing to do with the camera. This single substitution moves the headline
+conclusion by more than the effect being measured.
+
+**-r 4 does not fit on gpu0.** The 11 GB card OOMs during `Raytracer.from_point_cloud` on
+every myscenes scene except tunnel (3.8 M init points). Queue the -r 4 matrix on gpu1 only;
+`queue_rttpf_control.sh <root> 8 7500 0 ...` is the gpu0-safe variant, but see the noise
+caveat below before trusting single-scene -r 8 deltas.
+
+Things worth knowing before running it:
+
+* **Learning rate is in normalized-plane units (~ `fx` pixels), not pixels or COLMAP
+  units**, so it transfers across render resolutions. Swept on tunnel (-r 8, 7500 it,
+  unfreeze at 1500), test PSNR against 28.06 for `off` and 28.26 for `noncentral`: 1e-6 ->
+  28.17, 1e-5 -> 28.22, 1e-4 -> 28.19, 1e-3 -> **28.24**, 3e-3 -> 28.21. That is a plateau
+  inside the +-0.06 noise floor, which is the useful part of the result: **the control is
+  not learning-rate starved**, so a shortfall against `noncentral` cannot be blamed on
+  tuning. **`config.py` now defaults to the swept optimum 1e-3**, so no flag is needed --
+  it was 1e-5 while the -r 8 matrix was being run, which is why those runs and the -r 4
+  ones are not directly comparable to each other (each track is internally consistent).
+* **Single-scene -r 8 deltas are near-worthless.** Repeats of the *same* rung land 0.07 dB
+  apart, i.e. as far as the effect being measured. The tunnel -r 8 pair happens to show
+  `rttpf` recovering ~85 % of the `noncentral` gain; the 7-scene -r 4 paired mean says 25 %.
+  Trust the paired mean over seven scenes, never one scene.
+* **It costs ~2.6x the `off` training time**, more than `noncentral` (2.0x). At -r 4 / 15k
+  that is ~22 min per scene on the TITAN.
+* **It only applies to RAD_TAN_THIN_PRISM_FISHEYE.** `train.py` refuses any other
+  `--camera_model`; `render.py`'s pinhole eval pass silently renders the *uncorrected*
+  camera (and prints one line saying so). Score the fisheye pass, as always.
+* **`camera_intrinsics_<iter>.csv`** in the run directory holds the COLMAP value, the
+  learned delta and the normalized coefficient for all 16 parameters. The `coefficient`
+  column times `fx` is roughly the peak pixel displacement that channel contributes -- but
+  the channels of the radial polynomial largely cancel each other, so read the *net* curve
+  from `scripts/analysis/rttpf_vs_noncentral.py`, never the individual coefficients.

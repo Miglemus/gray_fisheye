@@ -108,6 +108,122 @@ def test_passthrough_reproduces_native_path():
     assert (native_render - modelled_render).abs().max().item() < 1e-5
 
 
+def rttpf_coefficients(table, deltas):
+    "Inverse of `rttpf_delta_params`: a delta in COLMAP units -> learned coefficients."
+    focal = torch.tensor(
+        [table["params"][0], table["params"][1], table["params"][0], table["params"][1]],
+        device="cuda",
+    )
+    scaled = torch.as_tensor(deltas, dtype=torch.float32, device="cuda").clone()
+    scaled[:4] /= focal
+    return scaled * table["scales"]
+
+
+def test_rttpf_zero_coefficients_are_the_native_path():
+    "The intrinsic rung must be exactly `off` at initialization, like every other rung."
+    from gray.camera_model import rttpf_solve
+
+    raytracer = build_scene("rttpf")
+    camera = fisheye_camera()
+    base = raytracer.base_bearings(camera)
+    table = raytracer.camera_model.rttpf_table(base)
+    lens = raytracer.camera_model.lens(camera.uid)
+
+    delta_theta, delta_phi, residual = rttpf_solve(lens.intrinsics, table)
+    # * Bitwise, not "small": the Newton step is a difference of two identical projections,
+    # * so a zero coefficient can only give a zero rotation. Anything else means the base
+    # * pixel target was recomputed from something other than the solve's own projection.
+    assert delta_theta.abs().max().item() == 0.0
+    assert delta_phi.abs().max().item() == 0.0
+    assert residual.item() == 0.0
+
+
+def test_rttpf_reproduces_the_cuda_unprojection_of_a_perturbed_calibration():
+    """The rung's rays must BE the rays of the calibration its parameters describe.
+
+    This is the test that makes the control legitimate. The rung claims to answer "what if
+    COLMAP's 16 rttpf parameters were fitted photometrically instead"; if its quasi-Newton
+    inverse drifted from gray's own 100-step fixed point, it would be answering that
+    question about a slightly different camera model, and a shortfall against `noncentral`
+    could be an artefact of the inverse rather than a property of the lens.
+
+    Reference: the *native* raygen, probed with the perturbed intrinsics written straight
+    into `cam_info` -- no torch involved on that side.
+    """
+    from gray.camera_model import rttpf_solve
+
+    raytracer = build_scene("rttpf")
+    camera = dataclasses.replace(fisheye_camera(), R=np.eye(3))
+    base = raytracer.base_bearings(camera)
+    table = raytracer.camera_model.rttpf_table(base)
+
+    # * A realistic re-calibration, an order of magnitude larger than what training finds:
+    # * 0.4 % on the focal length, 1.5 px of principal point, and a distortion change worth
+    # * a few pixels at the rim.
+    deltas = np.zeros(16)
+    deltas[0], deltas[1] = 0.004 * table["params"][0].item(), -0.003 * table["params"][1].item()
+    deltas[2], deltas[3] = 1.5, -0.8
+    deltas[4], deltas[5], deltas[6] = 2.0e-3, -8.0e-4, 3.0e-4
+    deltas[10], deltas[11] = 5.0e-4, -4.0e-4
+    deltas[12], deltas[14] = 1.2e-3, -9.0e-4
+
+    perturbed = dataclasses.replace(camera, intrinsics=camera.intrinsics + deltas)
+    reference = raytracer.base_bearings(perturbed)["bearings"]
+
+    lens = raytracer.camera_model.lens(camera.uid)
+    with torch.no_grad():
+        lens.intrinsics.copy_(rttpf_coefficients(table, deltas))
+    _, direction = raytracer.camera_model(
+        camera,
+        {**base, "rotation": Raytracer._rotation_c2w_cuda(camera), "origin": camera.origin_cuda()},
+        HEIGHT,
+        WIDTH,
+    )
+
+    valid = (reference.norm(dim=-1) > 0.5) & (base["bearings"].norm(dim=-1) > 0.5)
+    assert valid.sum() > 0.3 * valid.numel(), "degenerate test: almost no valid pixels"
+    moved = (reference - base["bearings"]).norm(dim=-1)[valid].max().item()
+    assert moved > 1e-3, f"the perturbation is too small to test anything ({moved:.2e})"
+
+    chord = (direction - reference).norm(dim=-1)[valid].max().item()
+    assert chord < 1e-5, f"quasi-Newton inverse disagrees with the raygen by {chord:.3e} rad"
+    # * And the solve says so itself: the residual it reports is a worst-pixel *pixel* error.
+    _, _, residual = rttpf_solve(lens.intrinsics, table)
+    assert residual.item() < 1e-3, f"Newton did not converge: {residual.item():.3e} px"
+
+
+def test_rttpf_coefficients_mean_the_same_lens_at_any_resolution():
+    """The coefficient -> COLMAP-parameter map must not depend on the render resolution.
+
+    Otherwise a checkpoint trained at -r 4 silently describes a different camera when
+    re-rendered at another size -- the exact shape of the `scene_scale` bug in
+    IMPLEMENTATION.md, which was invisible in training and wrong in every saved PNG.
+    """
+    from gray.camera_model import rttpf_delta_params
+
+    raytracer = build_scene("rttpf")
+    camera = fisheye_camera()
+    half = dataclasses.replace(
+        camera,
+        image_width=WIDTH // 2,
+        image_height=HEIGHT // 2,
+        intrinsics=camera.intrinsics * np.array([0.5, 0.5, 0.5, 0.5] + [1.0] * 12),
+    )
+    raytracer.set_render_resolution(WIDTH // 2, HEIGHT // 2)
+    coarse = raytracer.camera_model.rttpf_table(raytracer.base_bearings(half))
+    raytracer.set_render_resolution(WIDTH, HEIGHT)
+    fine = raytracer.camera_model.rttpf_table(raytracer.base_bearings(camera))
+
+    coefficients = torch.linspace(-1.0, 1.0, 16, device="cuda")
+    fine_delta = rttpf_delta_params(coefficients, fine)
+    coarse_delta = rttpf_delta_params(coefficients, coarse)
+    # * fx, fy, cx, cy scale with the resolution; the twelve distortion coefficients act on
+    # * normalized coordinates and must come out identical.
+    expected = torch.cat([fine_delta[:4] * 0.5, fine_delta[4:]])
+    relative = ((coarse_delta - expected).abs() / expected.abs().clamp_min(1e-30)).max().item()
+    assert relative < 5e-3, f"coefficients are resolution-dependent by {relative:.2%}"
+
+
 def test_noncentral_origin_is_gauged_at_zero_and_moves_off_axis():
     "z(0) = 0 exactly, and z(theta) is otherwise free -- the anti-degeneracy gauge."
     raytracer = build_scene("noncentral")
@@ -196,6 +312,8 @@ def test_bspline_subdivision_preserves_the_function():
         ("noncentral", "z_weights"),
         ("central_matched", "theta_weights"),
         ("raxel", "raxel"),
+        ("rttpf", "intrinsics"),
+        ("rttpf_z", "intrinsics"),
     ],
 )
 def test_every_rung_completes_a_training_step(rung, expected):

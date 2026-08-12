@@ -171,30 +171,43 @@ class Raytracer(torch.nn.Module):
             None if intrinsics is None else tuple(np.asarray(intrinsics).ravel().tolist()),
         )
 
+    def scaled_intrinsics(self, cam_info: CameraInfo):
+        """(model, intrinsics at the active render resolution) -- None for a pinhole camera.
+
+        Intrinsics are stored for the full image; only the focal length and the principal
+        point rescale, the distortion coefficients act on normalized coordinates.
+
+        CACHED, because the answer is constant per (camera, resolution) while the rescale
+        costs a clone plus four in-place multiplies -- five kernel launches per render. The
+        CONTRACT that makes that safe: the returned tensor is COLMAP's calibration, which no
+        rung ever mutates. `rttpf` adds its learned delta to it and never in place. If you
+        ever need to modify it, clone first, or you corrupt every later render of that
+        camera.
+        """
+        from gray.camera_models import normalize_gray_model
+
+        model = normalize_gray_model(getattr(cam_info, "model", "pinhole"))
+        if model not in ["opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]:
+            return model, None
+        cache_key = Raytracer._camera_cache_key(cam_info, self.render_height, self.render_width)
+        intrinsics = self._intrinsics_cache.get(cache_key)
+        if intrinsics is None:
+            intrinsics = cam_info.intrinsics_cuda().clone()
+            scale_x = self.render_width / cam_info.image_width
+            scale_y = self.render_height / cam_info.image_height
+            intrinsics[0] *= scale_x  # fx
+            intrinsics[2] *= scale_x  # cx
+            intrinsics[1] *= scale_y  # fy
+            intrinsics[3] *= scale_y  # cy
+            self._intrinsics_cache[cache_key] = intrinsics
+        return model, intrinsics
+
     def upload_camera_intrinsics(self, cam_info: CameraInfo):
         "Push the camera model and its intrinsics, rescaled to the active render resolution."
         camera = self.cuda_module.get_camera()
         camera.vertical_fov_radians.fill_(cam_info.fov_y)
-        from gray.camera_models import normalize_gray_model
-
-        model = normalize_gray_model(getattr(cam_info, "model", "pinhole"))
-        if model in ["opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]:
-            # * Intrinsics are stored for the full image; rescale to the active render
-            # * resolution. Cached: the rescale is a clone plus four in-place multiplies, i.e.
-            # * five kernel launches, for an answer that is constant per (camera, resolution).
-            cache_key = Raytracer._camera_cache_key(
-                cam_info, self.render_height, self.render_width
-            )
-            intrinsics = self._intrinsics_cache.get(cache_key)
-            if intrinsics is None:
-                intrinsics = cam_info.intrinsics_cuda().clone()
-                scale_x = self.render_width / cam_info.image_width
-                scale_y = self.render_height / cam_info.image_height
-                intrinsics[0] *= scale_x  # fx
-                intrinsics[2] *= scale_x  # cx
-                intrinsics[1] *= scale_y  # fy
-                intrinsics[3] *= scale_y  # cy
-                self._intrinsics_cache[cache_key] = intrinsics
+        model, intrinsics = self.scaled_intrinsics(cam_info)
+        if intrinsics is not None:
             if model == "opencv_fisheye":
                 camera.set_opencv_fisheye(intrinsics)
             elif model == "thin_prism_fisheye":
@@ -273,8 +286,14 @@ class Raytracer(torch.nn.Module):
         cos_phi = torch.where(valid, bearing_x / safe_radius, zeros)
         sin_phi = torch.where(valid, bearing_y / safe_radius, zeros)
         theta = torch.atan2(radius, bearing_z)
+        model, scaled = self.scaled_intrinsics(cam_info)
         base = {
             "bearings": bearings,
+            # * The calibration these bearings came from, at THIS render resolution: what
+            # * the rttpf rung re-fits. Part of the base dict rather than re-derived in the
+            # * camera model so that the two can never disagree about the scaling.
+            "model": model,
+            "intrinsics": scaled,
             # * Axis of the meridional rotation; orthogonal to the bearing by construction.
             "meridian": torch.stack([-sin_phi, cos_phi, zeros], dim=-1),
             "theta01": (theta / (math.pi / 2.0)).clamp(0.0, 1.0),
