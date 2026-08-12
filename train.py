@@ -48,7 +48,11 @@ from threading import Thread
 from torch.utils.tensorboard import SummaryWriter
 
 # * Read scene and prep preview cameras
-set_seeds(0)
+# * The seed is wired here, before anything reads the scene, builds the point cloud or
+# * allocates the raytracer, so every draw downstream (the camera shuffle of each epoch, the
+# * torch init of the gaussians, any numpy sampling in the scene loader) hangs off it.
+# * It does NOT make a run bit-reproducible -- see the comment on `seed` in gray/config.py.
+set_seeds(cfg.seed)
 scene = SceneInfo.from_colmap(cfg)
 cam0 = scene.train_cameras[0]
 if cfg.preview_train_image_name:
@@ -152,6 +156,43 @@ if raytracer.camera_model is not None:
     # * above; the parameters themselves stay in COLMAP units so nothing has to be
     # * restored at render time.
     raytracer.camera_model.scene_scale = float(scene.point_cloud.radius)
+
+# * Camera-model transfer / freeze. Deliberately AFTER `scene_scale` above: `CameraModel.lens()`
+# * bakes `camera_opt_lr_z * scene_scale` into the optimizer group when the block is created,
+# * and both helpers below create every lens block eagerly. Both are no-ops unless their flag
+# * is set, so a run that uses neither takes exactly the code path it always took.
+# *
+# * NOTE ON TIMING: `camera_opt_from_iter` gates the OPTIMIZER, not `forward()`. A residual
+# * loaded here is therefore applied to the rays from iteration 1, phase A included -- which
+# * is what a frozen transferred camera should do, and what a warm start (init without
+# * freeze) means too: the geometry is built on the loaded camera from the start, and only
+# * the refinement of the camera waits for `camera_opt_from_iter`.
+camera_model_transfer = None
+camera_model_freeze_summary = None
+if cfg.camera_model_init is not None or cfg.camera_model_freeze:
+    assert raytracer.camera_model is not None, "camera model is off (checked in config, re-check)"
+    scene_uids = sorted({cam.uid for cam in scene.train_cameras + scene.test_cameras})
+    if cfg.camera_model_init is not None:
+        camera_model_transfer = apply_camera_model_transfer(
+            raytracer.camera_model, cfg, scene_uids, float(scene.point_cloud.radius)
+        )
+        print(f"[camera_model_init] {json.dumps(camera_model_transfer)}")
+    if cfg.camera_model_freeze:
+        camera_model_freeze_summary = freeze_camera_model(raytracer.camera_model, scene_uids)
+        print(f"[camera_model_freeze] {json.dumps(camera_model_freeze_summary)}")
+    # * A provenance record next to config.json: which checkpoint, which uid pairing, which z
+    # * convention. config.json holds the flags; this holds what they resolved to.
+    with open(os.path.join(cfg.model_path, "camera_model_init.json"), "w") as f:
+        json.dump(
+            {
+                "seed": cfg.seed,
+                "scene_radius": float(scene.point_cloud.radius),
+                "transfer": camera_model_transfer,
+                "freeze": camera_model_freeze_summary,
+            },
+            f,
+            indent=4,
+        )
 
 # * Setup logging
 writer = SummaryWriter(log_dir=cfg.model_path)

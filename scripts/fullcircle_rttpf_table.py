@@ -48,6 +48,11 @@ def _num(path, key=None):
         return None
 
 
+def _spags_gaussians(run_dir):
+    """nerficg keeps the final gaussian count inside training_time.json, not a sidecar."""
+    return _num(f"{run_dir}/training_time.json", "n_gaussians")
+
+
 def _hms(path):
     try:
         with open(path) as f:
@@ -73,15 +78,25 @@ def perf(key, root, layout, scene, variant):
                 "fps": _num(f"{d}/fps.json", "fps"),
                 "train_s": _num(f"{d}/training_time.json", "training_time")}
     if layout == "grut":
-        d = os.path.join(root, f"fullcircle_{name}")
-        return {"n_gaussians": _num(f"{d}/gaussians_end.json", "count"),
-                "fps": _num(f"{d}/fps.json", "fps"),
-                "train_s": _num(f"{d}/training_time.json", "training_time")}
+        # * Sidecar depth varies: measure_fps.py re-derives its output dir from the
+        # * checkpoint's config, which sometimes nests one level deeper than the renders.
+        # * Search the subtree and take the newest, exactly as the viewer's read_perf does,
+        # * rather than guessing the depth (guessing silently produced a `--` column).
+        out = {}
+        for key, fname, field in (("n_gaussians", "gaussians_end.json", "count"),
+                                  ("fps", "fps.json", "fps"),
+                                  ("train_s", "training_time.json", "training_time")):
+            hits = sorted(glob.glob(f"{root}/fullcircle_{name}/**/{fname}", recursive=True),
+                          key=os.path.getmtime)
+            out[key] = _num(hits[-1], field) if hits else None
+        return out
     if layout == "spags":
+        # * nerficg writes fps.csv (a bare number) rather than fps.json, and reports the
+        # * gaussian count inside results.json instead of a sidecar of its own.
         for d in sorted(glob.glob(f"{root}/fc_{scene}_rttpf_*"), reverse=True):
-            if os.path.exists(f"{d}/fps.json"):
-                return {"n_gaussians": _num(f"{d}/gaussians_end.json", "count"),
-                        "fps": _num(f"{d}/fps.json", "fps"),
+            if os.path.exists(f"{d}/fps.csv") or os.path.exists(f"{d}/fps.json"):
+                return {"n_gaussians": _spags_gaussians(d),
+                        "fps": _num(f"{d}/fps.json", "fps") or _num(f"{d}/fps.csv"),
                         "train_s": _num(f"{d}/training_time.json", "training_time")}
     return {"n_gaussians": None, "fps": None, "train_s": None}
 

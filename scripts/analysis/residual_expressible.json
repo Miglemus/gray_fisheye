@@ -2,25 +2,25 @@
  {
   "name": "myscenes (one lens, 7 independent COLMAP fits)",
   "uid": 1,
-  "total_px": 0.39594760808865515,
-  "control_rms_px": 0.00018167021338128835,
-  "corrected_rms_px": 0.005561379787219122,
-  "inexpressive_px": 0.005379709573837834
+  "total_px": 0.33483627535699867,
+  "control_rms_px": 1.2875951959757836e-05,
+  "corrected_rms_px": 0.0026664075479360346,
+  "inexpressive_px": 0.0026535315959762768
  },
  {
   "name": "FullCircle refit_rttpf (lens 1)",
   "uid": 1,
-  "total_px": 0.04614978123903034,
-  "control_rms_px": 0.0005343708828204808,
-  "corrected_rms_px": 0.0047092523847179334,
-  "inexpressive_px": 0.0041748815018974525
+  "total_px": 0.06705671734447011,
+  "control_rms_px": 1.0617833127909341e-06,
+  "corrected_rms_px": 0.0037730932500273703,
+  "inexpressive_px": 0.0037720314667145792
  },
  {
   "name": "FullCircle refit_rttpf (lens 2)",
   "uid": 2,
-  "total_px": 0.06210062713231063,
-  "control_rms_px": 0.0012147980960374174,
-  "corrected_rms_px": 0.001955551198496738,
-  "inexpressive_px": 0.0007407531024593206
+  "total_px": 0.06291531957110398,
+  "control_rms_px": 4.488526701343315e-07,
+  "corrected_rms_px": 0.0013679581457293137,
+  "inexpressive_px": 0.0013675092930591794
  }
 ]

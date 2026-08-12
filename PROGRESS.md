@@ -1,19 +1,13 @@
 # Ajouter « gray + caméra non-centrale (ours) » comme baseline FullCircle piste rttpf
-Mis à jour : lundi 10 août 2026, 16:35 (EDT)
+Mis à jour : mardi 11 août 2026, 10:40 (EDT)
 
 ## Étape courante
-Rien à faire à la main. Le livrable est en place et vérifiable ; il ne reste qu'à
-consommer 8 jobs GPU en file, puis à refaire éval → fusion → `ctl.sh rebuild` et à
-compléter la colonne coût.
+**Terminé.** Table canonique, viewer, docs et métriques de perf sont à jour avec la graine 2.
 
 ## En attente de
-- **pueue 1539–1545** (Queued, gpu1) — re-runs propres des 7 scènes `noncentral` du lot
-  contendu. ~10 min pièce.
-- **pueue 1546** (Queued, gpu1) — balayage FPS des 27 runs de la piste, une seule carte,
-  d'affilée. ~15 min.
-- Devant eux : **1531 (Running) puis 1532–1536**, jobs d'**une autre session**. 1530 a duré
-  25 min, donc compter **~2 h 30** avant que 1539 démarre. Ne pas y toucher.
-- Une attente en arrière-plan est armée sur 1546.
+- **pueue 1668** (viewer, `precompute_metrics.py`) — dernier `ctl.sh rebuild`. Cosmétique :
+  la table et le manifeste sont déjà justes, ce job ne refait que les métriques par vue.
+  Attente armée en arrière-plan.
 
 ## Fait
 - [x] 9 scènes `refit_rttpf` entraînées avec `--camera_opt noncentral` (recette identique à
@@ -29,19 +23,25 @@ compléter la colonne coût.
       `scripts/analysis/calib_consistency.py` + `residual_expressible.py`.
 - [x] Sonde LR ×10 (`room2`, job 1524) : exclut l'artefact de schedule.
 - [x] `PROTOCOL.md` + `IMPLEMENTATION.md` à jour. Mémoire : `noncentral-camera-model.md`.
+- [x] **Seconde graine** : 7 scènes relancées sur carte libre (1539–1545). Écart
+      graine-à-graine −0.115 à +0.048 (écart-type 0.046), **plus grand que l'effet mesuré**.
+- [x] **Perf propre** (1546, balayage unique sur gpu1, gray inclus qui n'avait aucun
+      `fps.csv`) : `noncentral` 10.2 min / 245.6 FPS contre `off` 4.6 min / 419.4 FPS.
+- [x] Ré-éval graine 2 → fusion (9 remplacées, 0 ajoutée) → `ctl.sh rebuild`.
+- [x] `scripts/fullcircle_rttpf_table.py` : table complète 6 métriques × 5 méthodes →
+      `dataset/fullcircle_baselines/fullcircle_rttpf_results.{md,csv}`.
 
 ## À faire
-- [ ] Quand 1539–1545 sortent : ré-évaluer (`masked_eval_rttpf.py --methods gray gray-nc
-      gray-nc-off --out .../rttpf_masked_nc`), fusionner **seulement `gray-nc`**, rebuild.
-- [ ] Reporter la seconde graine : écart graine-à-graine sur les 7 scènes = estimation de
-      bruit supplémentaire pour le résultat nul.
-- [ ] Colonne FPS + temps d'entraînement dans `scripts/fullcircle_rttpf_table.py`
-      (script écrit, jamais lancé avec des données propres).
+- rien
 
 ## Décisions et surprises
-- **Le résultat est un zéro, et c'est le livrable.** +0.016 dB sur le contrôle apparié
-  (écart-type 0.033, positif sur 4 scènes/9) pour **~2.1× le temps d'entraînement**. SPaGS
-  garde la piste avec 28.678 contre 28.347. Ne pas présenter cette ligne comme un gain.
+- **Le résultat est un zéro, et c'est le livrable.** **+0.009 dB** sur le contrôle apparié,
+  moyenné sur deux graines (graine 1 : +0.016, graine 2 : +0.003), pour **×2.3 le temps
+  d'entraînement et ×0.58 la vitesse de rendu**. La dispersion graine-à-graine (0.046) est
+  plus grande que l'effet. SPaGS garde la piste avec 28.678 contre 28.335. Ne pas présenter
+  cette ligne comme un gain.
+- **Le contrôle `off` reproduit gray sur les trois axes** : PSNR +0.003, gaussiennes à
+  0.1–1 %, FPS 419.4 contre 419.9. Le worktree est neutre, la comparaison est valide.
 - **Le rung n'est pas cassé** : profil par anneaux croissant vers la périphérie comme la
   théorie l'exige, simplement 35× plus faible que sur `workshop`.
 - **Pourquoi** : le +0.33 de myscenes était à **98.6 % une correction que rttpf pouvait

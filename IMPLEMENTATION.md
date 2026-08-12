@@ -27,6 +27,10 @@ thing gray was missing was `dL/d(ray)`.
 | `scripts/radial_eval.py` | **new** — radially-binned masked metrics |
 | `scripts/train_myscenes.sh`, `scripts/eval_rttpf.sh` | **new** — run wrappers (see PROTOCOL.md) |
 | `tests/test_eval_modes.py` | bug fix, see "pre-existing issues" |
+| `gray/camera_model.py` | `forward()` split into `camera_frame()` (pose-independent, **cached**) + `apply_pose()` (per image); `invalidate_ray_cache()` — see "The pose-independent ray cache" |
+| `tests/test_camera_model_cache.py` | **new** — 33 CPU tests: bit-exactness over rungs x resolutions x poses, and the pose-freezing line the cache must not cross |
+| `scripts/bench_ray_cache.py` | **new** — the FPS A/B for that cache, bit-exactness checked before any timing |
+| `scripts/traversal_coherence.py`, `tests/test_traversal_coherence.py` | **new** — does the non-central origin cost BVH coherence? (`hits/ray`, `off` vs `noncentral`) |
 
 ## How it works
 
@@ -190,14 +194,22 @@ published row, scored by the same shared masked pass.
 |---|---|---|---|---|---|---|---|---|---|---|
 | gray (published) | 30.268 | 30.340 | 28.559 | 27.626 | 28.365 | 28.834 | 22.709 | 28.451 | 29.803 | 28.328 |
 | `off` (this worktree) | 30.224 | 30.368 | 28.618 | 27.606 | 28.387 | 28.830 | 22.734 | 28.425 | 29.791 | **28.332** |
-| `noncentral` | 30.282 | 30.422 | 28.607 | 27.600 | 28.382 | 28.816 | 22.754 | 28.491 | 29.770 | **28.347** |
-| *nc − off* | +0.057 | +0.054 | −0.011 | −0.006 | −0.005 | −0.014 | +0.020 | +0.066 | −0.021 | **+0.016** |
+| `noncentral`, seed 1 | 30.282 | 30.422 | 28.607 | 27.600 | 28.382 | 28.816 | 22.754 | 28.491 | 29.770 | 28.347 |
+| `noncentral`, seed 2 | 30.265 | 30.420 | 28.492 | 27.648 | 28.360 | 28.824 | 22.742 | — | — | **28.335** |
+| *nc (2 seeds) − off* | +0.050 | +0.053 | −0.069 | +0.018 | −0.016 | −0.010 | +0.014 | +0.066 | −0.021 | **+0.009** |
 
-* **The `off` control reproduces the published gray row to +0.003 dB on the mean** (and its
-  gaussian counts land within 0.1-1 % — 156 206 vs 156 516 on room1). The branch's CUDA
-  changes are neutral, and the published row is a legitimate baseline for this track.
-* **+0.016 dB, std 0.033 across scenes** (standard error 0.011). Positive on 4 of 9,
-  negative on 5. This is zero.
+Seed 2 is the second, clean-card training of the seven scenes whose first run shared the
+GPU; `dark` and `persons` were already clean and were not repeated. The canonical table and
+the viewer carry seed 2, because those are the renders now on disk.
+
+* **The `off` control reproduces the published gray row to +0.003 dB on the mean**, its
+  gaussian counts land within 0.1-1 % (156 206 vs 156 516 on room1) and its render speed
+  matches to 0.1 % (419.4 vs 419.9 FPS). The branch's CUDA changes are neutral, and the
+  published row is a legitimate baseline for this track.
+* **+0.009 dB over two seeds.** Seed 1 alone gave +0.016, seed 2 alone +0.003; the
+  seed-to-seed spread on the seven repeated scenes is -0.115 to +0.048 (std 0.046),
+  i.e. **larger than the effect being measured**. Positive on 5 of 9. This is zero, and the
+  repeat is what makes it safe to say so.
 * **It does not change the ranking.** SPaGS' fisheye port keeps this track at **28.678**,
   0.33 dB ahead — the camera model closes none of it. Contrast myscenes, where the same
   rung took gray from 27.124 past SPaGS' 27.333.
@@ -244,16 +256,34 @@ after the re-fit, so the `tilt` term did still have a free 3 DoF here; it was no
 
 ### Cost
 
-| | train | #gauss |
-|---|---|---|
-| `off` | 4:30-5:11 | 62.9k-278k |
-| `noncentral` | 9:12, 9:47 (clean card) | within 1 % of `off` |
+Every run below trained and was timed on a card it had to itself, and every FPS comes from
+one back-to-back sweep on gpu1 (`scripts/measure_fullcircle_fps.sh`), gray included — the
+published `gray` runs had no `fps.csv` at all before this.
 
-**~2.1x training time** for nothing, on this track. The 14-16 min figures in the first
-batch's `time.csv`, and every FPS in it (63 to 245 on comparable scenes), are contention
-artefacts — a foreign process held 12 GB of the same card. Only `dark` and `persons` were
-trained on a card this worktree had to itself. `scripts/measure_fullcircle_fps.sh` re-times
-the whole track, gray included.
+| | train | FPS | #gauss |
+|---|---|---|---|
+| gray (published) | 4.4 min | 419.9 | 130 953 |
+| `off` (this worktree) | 4.6 min | 419.4 | 131 059 |
+| `noncentral` | **10.2 min** | **245.6** | 130 246 |
+
+**2.3x training time and 0.58x render speed, for nothing on this track.** Ray synthesis runs
+in Python once per frame, which is where both go. Gaussian counts are unchanged, as expected
+— the camera model touches rays, not geometry.
+
+The whole first batch's `time.csv` (14-16 min) and FPS (63 to 245 on comparable scenes) were
+contention artefacts: a foreign process held 12 GB of the same card. They are gone from the
+runs now, but the lesson is in the traps below.
+
+Full cross-method table, all six metrics, generated by `scripts/fullcircle_rttpf_table.py`
+into `dataset/fullcircle_baselines/fullcircle_rttpf_results.md`:
+
+| method | PSNR | SSIM | LPIPS | #gauss | FPS | train |
+|---|---|---|---|---|---|---|
+| SPaGS (fisheye port) | **28.678** | **0.9391** | **0.1869** | 203 377 | 341.0 | 16.4 min |
+| **gray + camera model** | 28.335 | 0.9329 | 0.2064 | 130 246 | 245.6 | 10.2 min |
+| gray | 28.328 | 0.9328 | 0.2065 | **130 953** | **419.9** | **4.4 min** |
+| DirectFisheye-GS | 28.132 | 0.9331 | 0.2018 | 257 435 | 388.6 | 18.6 min |
+| 3DGUT | 28.042 | 0.9321 | 0.2078 | 175 795 | 277.4 | 10.8 min |
 
 ### Two traps this track exposed
 
@@ -379,34 +409,49 @@ since the renderer samples the downsampled grid; and normalising the radius by e
 scene's own `r(theta_max)` pins every scene to the same value at the rim and manufactures
 agreement exactly where the residual acts (it reported 0.000 px of disagreement there).
 
+**All numbers below were regenerated on 2026-08-12 after fixing the radial-index bug** (see
+"Two silent bugs in the calibration analysis" further down). The pre-fix table claimed a
+2.970 px cross-scene disagreement on myscenes and 2.393 px on FullCircle lens 2; those were
+artefacts. Do not resurrect them from git history.
+
 | | myscenes (1 lens, 7 fits) | FC lens 1 (9 re-fits) | FC lens 2 |
 |---|---|---|---|
 | images per scene | 332 | 1060 | 1060 |
-| cross-scene calibration disagreement, rim | 2.970 px | 1.273 px | 2.393 px |
-| learned residual, **shared** part, rim | **0.393 px** | 0.037 px | 0.035 px |
-| learned residual, per-scene part, rim | 0.233 px | 0.033 px | 0.016 px |
-| shared / per-scene | 1.58 | 1.71 | 1.54 |
-| corr(scene's calib deviation, scene's residual) | **-0.427** | +0.125 | -0.051 |
-| effect on cross-scene spread | **-5.6 %** | +0.9 % | -0.2 % |
+| cross-scene calibration disagreement, rim | 0.397 px | 0.095 px | 0.049 px |
+| learned residual, **shared** part, rim | **0.324 px** | 0.065 px | 0.058 px |
+| learned residual, per-scene part, rim | 0.197 px | 0.058 px | 0.022 px |
+| shared / per-scene | 1.56 | 1.70 | 1.54 |
+| corr(scene's calib deviation, scene's residual) | **-0.856** | -0.726 | +0.169 |
+| effect on cross-scene spread | **-36.0 %** | -22.1 % | +48.7 % |
 | PSNR gain | +0.33 to +0.44 dB | +0.016 dB | |
 
-Two distinct things are true on myscenes and false on FullCircle:
+What survives the fix, and is now much stronger than reported:
 
-1. **A systematic ~0.4 px error at the rim, common to all 7 independent fits of the same
-   lens.** That is the honest meaning of "the delivered calibration does not describe this
-   lens". It is **10x smaller** on FullCircle.
-2. **A per-scene error the residual actively cancels.** The correlation between a scene's
-   own calibration deviation and its own learned residual is **-0.427** — the residual
-   points *against* the error of the scene it was trained on. That is also the only reason
-   the cross-scene spread can move at all: a shared component cannot change a standard
-   deviation, so the -5.6 % is entirely this term. On FullCircle the correlation is zero
-   and the spread does not move.
+1. **A systematic ~0.32 px error at the rim, common to all 7 independent fits of the same
+   lens** — the honest meaning of "the delivered calibration does not describe this lens".
+   It is 5x smaller on FullCircle.
+2. **A per-scene error the residual actively cancels**, at `corr = -0.856` (not -0.427): the
+   residual points *against* the error of the scene it was trained on. A shared component
+   cannot change a standard deviation, so the entire -36.0 % contraction of the cross-scene
+   spread is this term.
+3. The **shared / per-scene ratio (1.54-1.70)** is untouched by the fix, because the residual
+   is read from the checkpoint spline and never passes through the radial indices.
 
-**Cross-scene disagreement alone predicts nothing.** FullCircle's lens 2 disagrees by
-2.39 px, close to myscenes' 2.97, and gains nothing. The predictor is the SHARED bias
-(0.393 vs 0.035 px), not the variance of the fits.
+What **died** with the fix, and must not be written up:
 
-The practical threshold worth remembering: **0.04 px is far below what gray can express** —
+* ~~"Cross-scene disagreement alone predicts nothing"~~. Corrected, the disagreement orders
+  myscenes **4.7-6.7x above** FullCircle (0.397 vs 0.095 / 0.049 px; 868.7 vs 184.4 /
+  129.9 urad recomputed independently through pycolmap's real projection) — the same order as
+  the gains. And it sits within 10-40 % of the shared bias (791/869, 208/184, 197/130 urad).
+  **Shared bias and fit-to-fit variance are not separable on this evidence.** `plate_scale.py`
+  reached the same conclusion independently (0.360 / 0.069 / 0.045 px) and left the warning
+  that this argument had to be re-checked before write-up; it has been, and it fails.
+* ~~"On FullCircle the correlation is zero and the spread does not move"~~. Lens 1 is at
+  `corr = -0.726` and contracts by 22.1 % while gaining +0.016 dB. So the cancellation
+  mechanism is real and general — it just does not, by itself, buy PSNR. Lens 2 goes the
+  other way (+0.169, spread +48.7 %) on a residual of 0.058 px, i.e. inside the noise.
+
+The practical threshold worth remembering: **0.05 px is far below what gray can express** —
 one ray per pixel, `jitter_primary_rays` false, no anti-aliasing anywhere (limitation 3).
 No camera model, however rich, can cash a correction that small.
 
@@ -415,36 +460,89 @@ No camera model, however rich, can cash a correction that small.
 `scripts/analysis/residual_expressible.py`. "The lens is underfit by rttpf" conflates two
 claims, and the data picks one. The learned residual moves each pixel radius `r` from angle
 `theta` to `theta + dtheta`, so the corrected forward map passes through the samples
-`(theta_i + dtheta_i, r_i)`. `r = fx * t * (1 + k1 t^2 + ... + k4 t^8)` is LINEAR in
-`(fx, fx*k1 ... fx*k4)` over the basis `[t, t^3, t^5, t^7, t^9]`, so "could rttpf have
-expressed this?" is an exact least-squares question. Control: the same fit on the
-UNcorrected samples must return ~0, since they were generated by that very form (0.0002 px).
+`(theta_i + dtheta_i, r_i)`. `r = fx * t * (1 + k0 t^2 + ... + k5 t^12)` is LINEAR in
+`(fx, fx*k0 ... fx*k5)` over the basis `[t, t^3, t^5, t^7, t^9, t^11, t^13]` — **seven**
+terms, because rttpf carries six radials, not four — so "could rttpf have expressed this?"
+is an exact least-squares question. Control: the same fit on the UNcorrected samples must
+return ~0, since they were generated by that very form. It now returns 0.0000 px.
 
 | | correction learned | absorbable by re-fitting rttpf | outside its span |
 |---|---|---|---|
-| myscenes | 0.396 px | **98.6 %** | 0.0054 px rms |
-| FC lens 1 | 0.046 px | 91.0 % | 0.0042 px |
-| FC lens 2 | 0.062 px | 98.8 % | 0.0007 px |
+| myscenes | 0.335 px | **99.2 %** | 0.0027 px rms |
+| FC lens 1 | 0.067 px | 94.4 % | 0.0038 px |
+| FC lens 2 | 0.063 px | 97.8 % | 0.0014 px |
 
-**98.6 % of the radial correction was reachable by moving the k1..k4 COLMAP already had.**
-The model class was adequate; the delivered coefficients were wrong. So the bulk of the
-myscenes gain is **online re-calibration**, not a richer camera: the right rttpf, found by
-photometric descent over whole images instead of reprojection of sparse features. FullCircle
-closes the loop — its explicit bundle re-fit did that job offline, leaving 0.046 px, which
-is why the model finds nothing there.
+**99.2 % of the radial correction was reachable by moving the k0..k5 COLMAP already had.**
+The model class was adequate; the delivered coefficients were wrong.
+
+**But do NOT conclude from this that the gain is re-calibration.** That inference was made
+here and has since been falsified by direct measurement: the `--camera_opt rttpf` rung hands
+the same photometric optimiser exactly those 16 rttpf parameters, and it recovers only
+**+0.082 of the +0.333 dB** at 15k (7 scenes, 6/7 positive), while `rttpf_z` — the same
+16 parameters plus a single scalar non-central profile `z(theta)` — adds **+0.244 more on
+7/7** and ties the full 111-parameter model. Expressibility and photometric value are
+different quantities: the correction lies inside rttpf's span, and gradient descent still
+does not land on it. See `worktrees/rttpf-intrinsics` for the rung table, and note the 15k
+budget qualifier: at 30k the `rttpf` control climbs to +0.119 / +0.120 dB on the two scenes
+measured, so the re-calibration share is budget-dependent and the 25 % figure must always be
+quoted with "at 15k" attached.
+
+### Two silent bugs in the calibration analysis, fixed 2026-08-12
+
+Both were the same mistake — assuming a fisheye camera has four radial coefficients — in two
+places, and the second one hid the first.
+
+1. `calib_consistency.py` set `RADIAL = [4, 5, 8, 9]`, the **12-parameter
+   `THIN_PRISM_FISHEYE`** layout (`fx fy cx cy k1 k2 p1 p2 k3 k4 sx1 sy1`). Every camera it
+   reads is **16-parameter `RAD_TAN_THIN_PRISM_FISHEYE`** (`fx fy cx cy k0..k5 p0 p1 s0..s3`),
+   whose six radials are **consecutive at 4..9** and carry `theta^2 .. theta^12`. The subset
+   silently dropped `k2, k3` and re-labelled `k4, k5` as the `theta^6 / theta^8` terms. Now
+   `RADIAL_BY_NPARAM = {16: [4..9], 12: [4,5,8,9], 8: [4..7]}`, and an unrecognised length
+   raises instead of guessing. `residual_expressible.py` and `calib_consistency_urad.py`
+   inherit the fix through `radial_poly()`; `plate_scale.py` already recomputed independently
+   and keeps doing so — leave that redundancy in place, it is what caught this.
+2. `residual_expressible.py` hardcoded `BASIS = [1, 3, 5, 7, 9]`, the same four-radial
+   assumption on the fitting side. rttpf's span is **seven** terms, `t .. t^13`. Now built
+   from the layout by `basis_for()`.
+
+**Why the script's own control did not fire.** It fits the *uncorrected* curve and asserts
+the residual is ~0, "because those samples were generated by exactly this form". They were —
+by `calib_consistency.radial_poly`, which was truncated *the same way as the basis*. Sampler
+and fit shared the error, agreed to 0.0002 px, and the control printed OK. A control only
+tests what it does not share with the thing under test; this one was generating its own
+ground truth from the same broken function. With both fixed it returns 0.0000.
+
+Truncating the polynomial anywhere fabricates rim noise: plate-scale dispersion across the
+7 myscenes fits was 5.0x with `[4:8]`, 1.12x with `[4,5,8,9]`, and is **1.01x** with the
+correct 4..9 (`S(theta)/fx` = 0.631-0.638). The affected outputs and their new values are in
+the two tables above.
 
 Combining this with the attribution ladder (tunnel, r4, 15k: `off` 28.49 -> `ana` 28.64 ->
-`noncentral` 28.73), the honest decomposition of the myscenes gain is:
+`noncentral` 28.73), this section originally concluded a **~60 % re-calibration / ~40 %
+non-centrality** split.
 
-* **~60 % re-calibration** — obtainable with no new model at all, by calibrating better;
-* **~40 % genuine non-centrality** — `z(theta)` moves the ray ORIGIN, which no central model
-  of any polynomial order can express. `optics.py` sizes the irreducible part at
-  0.12-0.41 px.
+> **SUPERSEDED — the split is ~25 / 75, measured directly, in the child worktree
+> `gray/worktrees/rttpf-intrinsics`.** The step from *"the correction lies inside rttpf's
+> span"* to *"most of the gain is re-calibration"* does not hold. `--camera_opt rttpf` hands
+> the baseline's own 16 rttpf parameters to the same optimizer on the same schedule and
+> **recovers only +0.082 of the +0.333 dB** (7 myscenes, stderr 0.029, 6/7 positive);
+> `noncentral` still beats that re-calibrated control by **+0.251 dB on 7/7**. The two rungs
+> are not even finding the same correction — field cosines scatter around zero, three
+> strongly negative. And `rttpf_z` (re-calibration + `z` only) reproduces `noncentral`
+> exactly (28.258 vs 28.254 on tunnel). **Expressibility was never in question; photometric
+> value was, and they are not the same quantity.** See that worktree's IMPLEMENTATION.md,
+> "RESULTS — the re-calibration control".
 
-Two caveats. The 40 % rests on one run on one scene at ~2x the noise floor (see the
-attribution section) and must not be quoted as settled. And "absorbable by re-fitting" is
-**not** "COLMAP would have found it": the two optimise different objectives (photometric
-over all pixels vs reprojection of sparse keypoints) on different data.
+One caveat carries over unchanged: "absorbable by re-fitting" is **not** "COLMAP would have
+found it": the two optimise different objectives (photometric over all pixels vs
+reprojection of sparse keypoints) on different data.
+
+**What this does to the FullCircle null (this document's main result): nothing — but it
+changes the reason.** "The re-bundle did the re-calibration offline" can only ever have been
+worth ~0.08 dB, so it explains at most a quarter of the missing gain. The other three
+quarters are that **the non-central term itself finds less to eat on this lens**: `z_weights`
+2.3-3.9e-3 here against 6.5e-3 on the myscenes ladder, and the outer-ring delta 35x smaller
+than `workshop`'s. Two small terms, not one absent one.
 
 ## Where the gain lands: it depends on the scene
 
@@ -572,8 +670,399 @@ pixel number by ~1.8x. The image-space displacement caused by an angular ray err
 **0.12-0.41 px**; rim disparity spread p05->p95 0.65-3.05 -> **0.36-1.72 px**. No PSNR,
 ring or ablation number is affected -- those are measured, not derived.
 
+## Subtractive rungs: can the non-central term stand on its own? (7 scenes, 2026-08-10)
+
+The cumulative ladder answers *"what does z(theta) add on top of everything else"*. It does
+NOT answer *"can z(theta) carry the model alone"*, and the two are not the same question,
+because the mean-over-depth part of the non-central shift, `z(theta) sin(theta) E[1/t|theta]`,
+has exactly the form of a *central* radial correction. `z` and `radial` are not orthogonal,
+so a rung read backwards is not a rung removed. Two subtractive rungs were added:
+
+    noncentral_no_ana  ("tilt","radial","z")   31 params   = noncentral minus the 80 anamorphic harmonics
+    z_only             ("z",)                   8 params   = the non-central profile alone
+
+7 scenes, -r 4, 15k, identical init / mask / schedule / frozen poses, one run each. Scored by
+`scripts/analysis/subtractive.py` (shared masked protocol; the script reproduces the published
+27.124 / 27.228 / 27.561 / 27.333 before it is used). `off` is the config-matched baseline.
+
+| scene | `off` | `z_only` (8) | `no_ana` (31) | `noncentral` (111) | SPaGS |
+|---|---|---|---|---|---|
+| atrium | 27.878 | 27.969 | 27.974 | 28.036 | 27.724 |
+| classroom | 28.562 | 28.877 | 28.921 | 28.973 | 28.723 |
+| forest | 19.565 | **19.503** | **19.534** | 19.645 | 19.595 |
+| library | 31.580 | 31.782 | 31.769 | 31.853 | 31.642 |
+| reception | 27.277 | 27.698 | 27.637 | 27.751 | 27.352 |
+| tunnel | 28.537 | 28.649 | 28.670 | 28.729 | **28.983** |
+| workshop | 27.198 | 27.611 | 27.940 | 27.942 | 27.312 |
+| **mean** | 27.228 | **27.441** | **27.492** | 27.561 | 27.333 |
+| vs SPaGS | −0.105 | **+0.108** | **+0.159** | +0.228 | — |
+
+**Both amputated models still beat SPaGS.** Dropping the 80 anamorphic harmonics costs
+0.069 dB (79% of the gain kept for 28% of the parameters); dropping the central terms
+entirely costs 0.120 dB and still leaves +0.108 dB over SPaGS with **8 parameters**.
+
+Two things this measures that the additive ladder could not:
+
+1. **8 non-central parameters beat 103–183 central ones.** On the three scenes where the
+   central rungs exist, `z_only` 27.986 > `ana` 27.851 (103 params) > `central_matched`
+   27.803 (183 params). This is a stronger control than `noncentral − ana`: it assumes no
+   additivity, and it hands the losing family a 13–23x parameter advantage.
+2. **The two families are largely redundant, not complementary.** On `reception`, `ana`
+   alone was +0.341 over `off` and `noncentral_no_ana` reaches +0.360 *without* anamorphic
+   harmonics at all. `z_only` (8 params) matches `no_ana` (31) to within noise on 6 of 7
+   scenes; the entire 0.051 dB mean gap between them is `workshop` (−0.329). So
+   `noncentral − ana` **understates** what z can do — it measures z only after the central
+   terms have already taken what they could.
+3. **Redundant is not the whole story: `workshop` is *super*-additive.** There the central
+   terms alone give +0.099 over `off` and `z` alone +0.413, but together **+0.744** — well
+   above the sum, where `reception` is well below it (+0.341, +0.421, together +0.474). Same
+   two families, opposite interaction, so "redundant" is a per-scene property, not a property
+   of the model. The reading that fits both: on `workshop` the geometry is wrong enough that
+   the central terms cannot do their own job until `z` has fixed it. (Caveat: the
+   "central alone" reference is `ana`, 103 params, since `radial` alone was never run on
+   these scenes, so these are not exact complements of `noncentral_no_ana`.)
+
+**GOTCHA — the amplitude of `z(theta)` is not identifiable without the central terms.**
+Measured by `scripts/analysis/z_shape.py`. The learned profile keeps its *shape*
+(corr 0.967–0.998 with the full model's curve) but its amplitude collapses: `z(85 deg)` in
+`z_only` is 0.31–0.83x the full model's value, median 0.63x (on `max |z|` rather than
+`z(85 deg)`: 0.28–0.86x, median 0.65x — same conclusion, and the script prints both). So the physical readout ("the entrance pupil moves X mm") depends on which
+rung produced it, and only the rungs that contain `radial` give the transferable number.
+Note the direction: the prediction from the non-orthogonality argument was that z would be
+*inflated* by absorbing the radial job; it *shrinks* instead. Also note that a correlation
+near 1 between two smooth monotone curves is nearly free — the amplitude carries the
+information, not the shape.
+
+LIMITATIONS of this section: one run per scene, no seed repeats, noise floor ±0.05–0.06 dB.
+`forest` sits *below* its own baseline in both amputated rungs (−0.062 and −0.031) where the
+full model gained +0.080 — the only scene where removing capacity actively hurts, but it is
+within noise and should not be read as a mechanism. Neither amputation changes any per-scene
+verdict: like the full model, both lose `tunnel` (−0.33 vs SPaGS) and `forest`, and win the
+other five. `ana` and `central_matched` were never run on the other four scenes, so the
+"8 params beat 183" comparison rests on three scenes.
+
+## PHASE 1 (W4) — the measurement pipeline, and what it exposed (2026-08-11)
+
+The paper's central contribution **is the measurement**, so a measurement pipeline that only
+one person can re-run is a contradiction. Phase 1 W4 turns the pile of analysis scripts into
+one command and one file.
+
+### What was added / changed
+
+| file | status | what |
+|---|---|---|
+| `scripts/analysis/run_phase1.py` | **new** | the single command. Runs every stage whose output is missing, then always `pack` + `figures`. `--list`, `--verify`, `--force <stage>|all`, `--only`. |
+| `scripts/analysis/pack.py` | **rewritten** | was a 100-line per-scene page builder that crashed on four missing inputs. Now the join point: embeds A1, A2, W1, W2, W3, the ladder and the calibration files verbatim, plus provenance (sha256 + mtime + producing command), a pre-joined figure payload, a headline block and six cross-file checks. |
+| `scripts/analysis/make_figures.py` | **new** | draws **all eight** figures from `report_data.json` and nothing else. Imports the drawing code of `dose_response.py` / `ranking_flip.py` / `make_rings_figure.py` so a figure cannot drift from the statistics it illustrates. |
+| `scripts/analysis/ladder.py` | **new** | the **pinhole** ablation ladder (there was none), the 2×2 interaction table, and the regularisation audit recomputed exactly from the saved weights. |
+| `scripts/analysis/rungs.py` | extended | `RUNGS` went from 4 to the full 6 (`noncentral_no_ana`, `z_only` added), default scene list from `tunnel` to all 7. `rungs.json` therefore changed shape. |
+| `scripts/analysis/make_rings_figure.py` | refactored | `main()` split into `draw(data, outdir)`; reads the pack, falls back to `rings_all.json`. |
+| `scripts/analysis/dose_response.py` | 3-char patch | `fig.savefig(path, format="svg")` → format from the extension, so the same function writes the pdf the plan asks for. |
+| `scripts/analysis/report_data.json` | **new output** | 2.23 MB, everything Phase 1 measured. |
+
+The four inputs `pack.py` had always wanted — `fields.json`, `rings.json`, `rungs.json`,
+`crops.json` — turned out to have **producers that had simply never been run**
+(`fields.py`, `collect.py`, `rungs.py`, `crops.py`). Nothing was rewritten; they were run,
+and `rungs.py` was widened to the six rungs the ladder argument actually needs.
+
+**Verified reproducibility:** `rm figures/*; python scripts/analysis/run_phase1.py --verify`
+brings back all 16 files, and the five figures that pre-dated this work come back
+**byte-identical in size** (`dose_response.svg` 192 787 B, `estimator_agreement.svg` 216 301 B,
+`estimator_lens_level.svg` 81 797 B, `ranking_flip.svg` 250 709 B, `rings.svg` 167 494 B) —
+so routing their data through the pack changed nothing.
+
+### The three Phase-1 results, in one page (all of it in `report_data.json → headline`)
+
+**W1 — the dose-response law.** Paired `noncentral − off`, one shared masked eval pass, never
+averaged across tracks: myscenes rttpf **+0.333 dB** (n=7, CI95 [+0.189, +0.498], Wilcoxon
+p = 0.016, 7/7 positive), mip-NeRF 360 pinhole **+0.196** (n=7, [+0.073, +0.328], p = 0.031,
+6/7), workshop_immervision **+0.081** (n=1), FullCircle refit_rttpf **+0.003** (n=9,
+[−0.035, +0.035], p = 0.57 — a null, and a same-configuration repeat moves scenes by more than
+that). The **pre-registered x axis is falsified**: against `E_sfm` the rank correlation is
+**negative** (ρ = −0.446, p = 0.029, n = 24), and the one-parameter fit has r² = −0.52, worse
+than the mean. The only training-free statistic that orders the effect is the cross-fit
+calibration disagreement **E_calib** (myscenes 958 µrad → +0.333 dB; FullCircle lenses 198 and
+139 µrad → +0.003 dB), giving a **practical threshold of 0.43–0.94 mrad** at the 0.068 dB noise
+floor — **descriptive only, n = 3 lenses, no CI is quotable**.
+
+**W2 — the ranking-flip predictor.** Of six method pairs, exactly one survives:
+**3DGUT − gray**, ρ = +0.506, permutation p = 0.0027, Holm 0.0165, cluster-bootstrap CI95
+[+0.15, +0.77] over 34 tracks / **18 independent captures**. At the honest unit of independence
+(one median per capture) ρ = +0.387, **p = 0.113** — the two levels disagree, so the headline
+must quote the conservative one and the result is **exploratory, not a law**. The other five
+pairs are NO EVIDENCE (|ρ| ≤ 0.07 for three of them). Leave-one-dataset-out beats the trivial
+"3DGUT always loses" baseline by **one track out of 34** (sign accuracy 0.912 vs 0.882); what
+it really buys is amplitude (MAE 0.252 vs 0.340 dB) and 2 of the 4 real inversions.
+
+**W3 — the gain is peripheral, and the ranking survives the radius.** On myscenes the paired
+rim-minus-centre delta is **+0.359 dB** for PSNR (CI95 [+0.141, +0.575], p = 0.023, 6/7 scenes)
+and **+0.0093** for SSIM (p = 0.015, **7/7**), while LPIPS is flat (−0.0008, p = 0.15) — two
+metrics agree, the third says nothing, and that is reported as such. On FullCircle the same
+contrast is +0.051 dB, p = 0.10 — consistent with its null. Under the mask-radius sweep,
+**23 of 1333** method pairs that are separated at both radii change order between r = 0.95 and
+r = 0.85 (**98.3 % survival**; PSNR 96.3 %, SSIM 99.3 %, LPIPS 99.3 %). **r = 1.00 is an
+annotated row, not a ranking** on 4 of 7 tracks, and on `immervision_rttpf` the three radii are
+literally the same mask (the polynomial-inversion criterion binds before the θ cut, so its
+"stability" is arithmetic).
+
+### The regularisation confound is FALSIFIED — recomputed here, not quoted
+
+`ladder.py` recomputes `LensResidual.regularization(l2=1e-2, curvature=1e-2)` exactly, from
+`camera_model.lenses.<uid>.{theta,phi,z}_weights` in `gaussians_15000.safetensors`, and
+divides by the final `l1` in `losses.csv`. Over **37 runs** (7 myscenes scenes × their rungs,
+plus bicycle and stump) the penalty is between **0.0000 % and 0.1395 %** of the data loss.
+
+| scene / rung | #regularised par | penalty | final L1 | penalty / L1 |
+|---|---:|---:|---:|---:|
+| workshop / `central_matched` | 180 | 2.915e-07 | 1.581e-2 | 0.0018 % |
+| workshop / `z_only` | **8** | **3.998e-06** | 1.554e-2 | 0.0257 % |
+| workshop / `noncentral_no_ana` | 28 | 2.079e-05 | 1.525e-2 | **0.1364 %** (worst case) |
+| reception / `central_matched` | 180 | 3.842e-07 | 1.976e-2 | 0.0019 % |
+| reception / `z_only` | 8 | 9.476e-07 | 1.958e-2 | 0.0048 % |
+
+Two independent reasons the confound cannot hold: the term is **inert** (0.14 % at worst
+cannot move a 2.4× difference), and **its sign is inverted** — `z_only` (8 params) pays
+**13.7× more** than `central_matched` (180 params) on workshop and 2.5× more on reception. It
+pays 0.5× on tunnel, i.e. the sign is not even consistent, which is what "inert" looks like.
+
+> **But the L2 is NOT commensurable between channels, and that is the reusable trap.**
+> `z_weights` is in units of the **scene radius** (`config.py:208` — `camera_opt_lr_z` is
+> documented as scene-scale free), `theta_weights` / `phi_weights` are in **radians** (~1e-4).
+> One coefficient, `camera_opt_reg_l2 = 1e-2`, is applied to both, so equal numbers are
+> completely different physical pressures. It is harmless *here only because the whole term is
+> negligible*; any increase of that coefficient makes the ladder uninterpretable, and no test
+> would catch it.
+
+### The additive ladder, and the control that decides it
+
+Mean Δ masked PSNR vs each scene's own `off`, all from `ladder.json` (`interaction_2x2`):
+
+| rung | #reg. par | fisheye, 3 full-ladder scenes | fisheye, all scenes present | bicycle (pinhole) | stump (pinhole) |
+|---|---:|---:|---:|---:|---:|
+| `tilt` | 0 | — | — | −0.037 | — |
+| `radial` | 20 | — | — | +0.026 | +0.028 |
+| `ana` | 100 | **+0.180** | +0.180 (3) | **+0.400** | — |
+| `central_matched` | 180 | **+0.132** | +0.132 (3) | **+0.362** | +0.088 |
+| `z_only` | **8** | **+0.315** | +0.213 (7) | **+0.039** | +0.023 |
+| `noncentral_no_ana` | 28 | +0.411 | +0.264 (7) | — | — |
+| `noncentral` | 108 | **+0.469** | +0.333 (7) | +0.437 | +0.061 |
+
+**Both tables in this section count *regularised* parameters** — `{theta,phi,z}_weights`
+only — because that is what the confound is about. The trained count is 3 higher wherever
+`tilt` is on (`omega` is trained but not regularised), which is why `noncentral` reads 108
+here and **111** everywhere else, and `noncentral_no_ana` 28 here and **31**. Verified
+against the checkpoints by counting non-zero entries: 31 / 8 / 111 for
+`noncentral_no_ana` / `z_only` / `noncentral`.
+
+Four readings, and the last two are new:
+
+1. **`z` alone beats every central model put together** on fisheye: +0.315 against +0.180
+   (`ana`) and +0.132 (`central_matched`, which has 22× more parameters).
+2. **The premise of `plan_camera_non_centrale_3dgrt.md` §4 is dead.** It predicted the
+   anamorphic term would carry the PSNR and the non-central term would carry only the
+   argument. It is the exact opposite: anamorphic is the *smallest* marginal slice
+   (+0.058 = 0.469 − 0.411) and `z` carries both.
+3. **THE NEGATIVE CONTROL HAS LANDED, AND IT PASSES.** On a pinhole camera a non-central
+   pupil cannot exist, so `z_only` there must be zero. It is: **+0.039 dB on bicycle and
+   +0.023 on stump, both under the 0.068 dB noise floor**, while `central_matched` takes
+   +0.362 of bicycle's +0.437. The order between the two rungs **inverts completely between
+   camera families** (pinhole: central ×9 over z; fisheye: z ×2.4 over central). That 2×2 is
+   much stronger than either cell alone — a capacity absorber would have absorbed on pinhole
+   too. Until this run the ladder table could not be written down at all.
+4. **The `ana` rung on pinhole (new here) separates two things that were confounded.**
+   `ana` (100 params, 10 knots, azimuthal freedom) gets **+0.400** where `central_matched`
+   (180 params, 18 knots, same azimuthal freedom) gets +0.362. So on bicycle the gain is
+   bought by **azimuthal freedom, not by knot count** — extra knots buy nothing, possibly
+   less than nothing. This also re-confirms that "bicycle's learned residual is purely
+   radial" is false: `radial` alone gets +0.026, one fifteenth of `ana`.
+
+**Caveats that must travel with that table.** `n = 1` per cell, no seeds. The fisheye
+3-scene column is tunnel/workshop/reception; the 7-scene column is lower (+0.213 vs +0.315 for
+`z_only`) because the four extra scenes are the low-signal ones — quote which column you mean.
+`tunnel/z_only` was still drifting 58 % at 15k, so its +0.111 is not a result in either
+direction. And the two families are scored differently on purpose (pinhole = full frame, no
+mask; fisheye = masked r=0.95): **only deltas against each scene's own `off` are ever
+compared, never absolute dB**.
+
+### LIMITATIONS and gotchas of the pipeline itself
+
+* **`report_data.json` is a JOIN, not a recomputation.** `pack.py` computes no metric of its
+  own. If an input is stale the pack is stale — which is why every input carries its sha256,
+  size and mtime in `provenance`, and why `--strict` exists.
+* **Its inputs were written at different times against checkpoints that MOVED.** pueue tasks
+  1539-1545 retrained 7 of the 9 FullCircle `noncentral` runs on 2026-08-10 between 19:30 and
+  20:40 local, i.e. **after** `calib_consistency.json` (13:16) and `plate_scale.json` (16:58)
+  were written and **before** `dose_response.json` and `ladder.json` (2026-08-11). Their
+  FullCircle learned-residual numbers therefore describe two different checkpoint instances.
+  The differences are below the noise floor but they are not zero. `provenance` carries every
+  mtime in UTC — read it before joining those three files by hand.
+* **Two of the six pack-time checks are plumbing, not evidence.** `rungs_vs_subtractive`
+  (0.0 dB over 34 rungs) and `w1_gain_vs_w3_rings` (0.0 dB) compare two invocations of the
+  *same* scoring code; they prove both saw the same runs, not that the metric is right. The
+  informative ones are the `radial_eval` non-regression anchor (−7e-07 dB against the
+  canonical 28.53749677) and the `E_sfm` joins (0.0 µrad on 198 rows).
+* **`crops.json` is base64 WEBP inside the JSON.** It is 177 KB of the 2.23 MB. If you ever
+  need the pack small, that is the knob; the crops figure is the only consumer.
+* **The figures import the analysis modules for their drawing code**, but take their data from
+  the pack. Importing `dose_response` pulls in scipy; it does no work at import time. If you
+  add a figure, take the payload as an argument — never re-open a source JSON.
+* **`run_phase1.py` will not launch a GPU stage, ever.** `rings_all` (~25 min) and
+  `mask_radius_sweep` (~3 h) need LPIPS on a card. It prints the `pueue add` line and stops.
+  If you "fix" that, you have broken the house rule, not the script.
+* **The ladder is a snapshot of the runs on disk at pack time.** Another session was still
+  adding pinhole rungs while this was written (`bicycle_ana` landed 2026-08-10 21:26,
+  `stump_z_only` at 2026-08-11 01:03). `python scripts/analysis/run_phase1.py --force ladder`
+  re-reads them. One benign config difference: `bicycle_off` has
+  `camera_opt_from_iter = 8000` against 3000 for the rungs — irrelevant, `off` has no camera
+  model to unfreeze, and every other parity key matches.
+* **`fields.py`'s console line prints pixels via `fx`.** `radial=1.197px` on workshop is
+  `max|Δθ| · fx`, not `max|Δθ| · S(θ)`. It is illustrative only and it is *not* the number in
+  the pack: `report_data.json` carries the angles, and A2's `plate_scale.json` carries the
+  true local plate scale (0.633 fx at the evaluated 85.5° edge, 0.554 fx at 90°).
+* **The `*_px` columns of `calib_consistency.json` were in QUARANTINE, and the cause is now
+  FIXED (2026-08-12) — see "Two silent bugs in the calibration analysis" below.** They are
+  still embedded under `calib_consistency_px_LEGACY` in old packs; re-run the pack to refresh
+  them. Nothing in `report_data.json`'s x axes ever depended on the bug — `E_sfm` and
+  `E_calib` project through `pycolmap`'s own camera object, `E_learned` through the checkpoint
+  spline — which is why `dose_response.json`'s `e_shared_bugfixed` (myscenes 634 µrad) is
+  *still* the number to prefer over the freshly regenerated 791 µrad: it integrates to the
+  85.5° mask edge through the full projection, while `calib_consistency` integrates to the
+  monotonicity fold through the radial polynomial alone. Same ordering, different estimator —
+  never mix them in one table.
+* **`pack.py` will happily pack a hole.** Missing optional inputs print a warning and land as
+  `null` with `provenance[...]["present"] = false`. Read that block before trusting a section.
+
+## The pose-independent ray cache — where the FPS tax actually is (2026-08-11/12)
+
+**The paper would today publish a ~2x FPS penalty on its headline contribution, and the
+penalty is not caused by the contribution.** Two independent readings of the `fps.csv` on
+disk say so:
+
+* **It does not depend on the rung.** `tunnel` at -r 4 / 15k: `ana` 117.44, `central_matched`
+  115.98, `noncentral` 112.08 — within 5 %, though `central_matched` has 183 parameters and
+  no non-central term at all.
+* **It is already there with an EMPTY residual.** The -r 8 ladder (`tmp/ladder_final`, 7500
+  it, gaussian counts within 2 %): `off` 725.22, **`passthrough` 625.55 (0.86x)**,
+  `noncentral` 375.99 (0.52x). `passthrough` runs the same Python path with a residual pinned
+  at zero, so 0.86x is the cost of the **two `[H,W,3]` framebuffer copies plus the per-image
+  GEMM alone**, and only the 0.52x → 0.86x span is synthesis. Independently, FullCircle
+  `room1` on an idle card: `off` 471.42 against `noncentral` 249.83 (0.53x).
+
+What the rungs share is not non-centrality — it is that `raytracer.py` synthesises the rays in
+**torch, per image**, and sets `rays_from_python=True`.
+
+> **Pre-registered prediction for the benchmark**, so the result cannot be read after the
+> fact: the cache should move `noncentral` from ~0.52x of native toward the `passthrough`
+> floor of ~0.86x, and **must not** exceed it. Anything past 0.86x would mean it also skipped
+> work that is genuinely per-image, i.e. a correctness bug that the timing found first.
+
+### What was split
+
+`CameraModel.forward()` is now two halves (`gray/camera_model.py`):
+
+| half | depends on | contents | cached |
+|---|---|---|---|
+| `camera_frame()` | lens parameters + base bearings | residual-rotated `bearings [H,W,3]`, `z_profile [H,W]`, `raxel_offset` | **yes** |
+| `apply_pose()` | + the view | c2w rotation, world origin, per-view SE(3), the axis `z` displaces along | never |
+
+Key: `(base["cache_key"], uid, height, width)`, and `base["cache_key"]` already carries the
+camera model, `fov_y`, the image size and the intrinsics themselves — the key that was
+widened after the stale-bearing collision. So the two eval models of
+`render.py --eval-models pinhole rad_tan_thin_prism_fisheye` cannot collide here either.
+
+**The one line a naive cache crosses.** `z(theta)` is a scalar *in the camera frame*, but the
+direction it displaces the ray origin along is `rotation[:, 2]`, the world-space optical
+axis — it rotates with the view. Caching one operation further would freeze the first view's
+pose into every later render, and the result would look like a plausible image, not like a
+crash. `tests/test_camera_model_cache.py::test_cpu_cache_does_not_freeze_the_pose` therefore
+does not check "the two fields differ": it reconstructs pose B's field from pose A's by the
+relative rotation `R_B R_A^T` and requires a chord below 1e-6, and it rebuilds the non-central
+origin from pose B's own axis with `torch.equal`, then asserts that pose A's axis would have
+been visibly wrong.
+
+### The rules that keep it correct
+
+* **Only under `no_grad`** — render, eval, FPS, and training previews. Under autograd the
+  tensors carry a graph a previous backward has freed and the parameters move every step, so
+  training always recomputes. `test_cpu_training_path_is_never_cached` pins that.
+* **Invalidated by** `step()`, `set_frozen()`, `_load_from_state_dict()`,
+  `materialize_from_state_dict()`, `Raytracer.set_render_resolution()` and
+  `apply_camera_model_transfer()` (`gray/config.py`, which pokes the parameters by hand).
+  Anything else that writes a parameter tensor directly **must** call
+  `invalidate_ray_cache()`; there is no way to detect it without a device sync.
+* **Escape hatch**: `GRAY_NO_RAY_CACHE=1`, or `model.ray_cache_enabled = False`. Deliberately
+  an environment variable and not a `config.py` flag — several sessions edit that file in
+  parallel and a new field there would collide.
+* **Bit-exact, by `torch.equal` and not by a tolerance**: 7 rungs x 2 resolutions x 3 poses,
+  plus a verbatim copy of the pre-split `forward()` as the reference (33 CPU tests, no GPU).
+
+### What it does NOT remove — read this before quoting a speedup
+
+Per image the rung still pays **one `[H,W,3]x[3,3]` GEMM, a renormalisation, and two `[H,W,3]`
+`copy_()` into the framebuffer**. Those are per-image by construction (they depend on the
+pose) or by the framebuffer contract. So this recovers the *synthesis*, not the whole tax, and
+native parity is not reachable this way: the rest needs the two cached tables to live on the
+CUDA side as a `Camera::bearing_table` / `origin_offset_table`, which is exactly the shape
+`camera_frame()` returns them in.
+
+> ⚠️ **No post-cache FPS number is quoted here, on purpose.** This work ran under an
+> instruction to queue no GPU task (four other sessions held the queue), so the speedup is
+> **unmeasured**; the numbers above are all pre-cache runs already on disk, and their card
+> occupancy at measurement time is unrecorded except for the FullCircle sweep.
+> `scripts/bench_ray_cache.py` is the A/B — one process, one checkpoint, ABBA-interleaved
+> arms, and it refuses to print a timing unless the two arms' pixels are `torch.equal`. The
+> `masked-efficiency` worktree measured 1.03–1.05x for the analogous *native*-path bearing
+> cache on single-camera fisheye scenes and **0.995x on a two-camera rig** (rebinding costs
+> what it saves) — so a rig may show nothing here either.
+
+**Memory.** One entry per `(camera uid, render resolution)`: ~4 floats/pixel on top of the
+~9 that `_base_bearing_cache` already holds. Nothing evicts either of them. On a COLMAP model
+with one camera per image this grows with the number of images — pre-existing, since the base
+bearings already do it, but the ray cache adds ~45 % to that footprint.
+
+## Does the non-central origin cost BVH coherence? First measurement — no
+
+The first question a graphics reviewer asks: neighbouring pixels no longer share an origin,
+so the primary bundle is no longer a pencil and the BVH cannot amortise a node fetch across
+it. `scripts/traversal_coherence.py --from-runs` reads the `hits/ray` that `train.py` already
+logs into `traversal_stats.csv` for every `off` / `noncentral` pair on disk (CPU, no render):
+
+| | n | mean | sd | CI95 | median | range |
+|---|---:|---:|---:|---:|---:|---:|
+| hits/ray ratio (`noncentral` / `off`) | 13 | **0.9981** | 0.0269 | [0.9835, 1.0127] | 0.9989 | 0.957–1.050 |
+| accum/ray ratio | 13 | 0.9993 | 0.0240 | — | — | — |
+
+Paired Wilcoxon against 1.0: **p = 0.735**. So: **no cost, down to about ±1.3 %.**
+
+**Read the confound before quoting it.** The two runs of a pair prune to slightly different
+gaussian counts (ratio 0.990 ± 0.007), and hits/ray depends on how many gaussians there are.
+It does not explain the scatter — Spearman(hits ratio, gaussian ratio) = **−0.374, p = 0.209**,
+and the sign is *opposite* to what the confound would produce — but this mode answers "is
+there a large effect", not "how large is it".
+
+The controlled version is `--measure` and it needs a GPU (not run here). One checkpoint, one
+view set, two arms that differ **only** in whether `z_weights` is zeroed: the ray directions
+are bit-for-bit identical between arms and the script reports `arms_are_a_control` to prove
+it. Its headline ratio pools over the pixels **both** arms traced, because a per-arm
+`hits > 0` mask puts a different denominator on each side — a grazing pixel pushed over or
+under that line by the origin shift would show up as a "coherence cost" on its own.
+
 ## GOTCHAS (things you would not guess)
 
+* **A `no_grad` render collects NO traversal statistics, silently.**
+  `params.stats.num_gaussians_hit[...]++` (`cuda/shaders.cu:65`) and
+  `num_gaussians_accumulated` (`cuda/forward_pass.cu:127`) are both inside `if (grads_enabled)`,
+  and that flag comes from `torch::autograd::GradMode::is_enabled()` on every `forward_pass()`.
+  Measuring hits/ray under `no_grad` returns zeros, not an error — which is why
+  `traversal_coherence.py --measure` renders under `enable_grad()` (never calling `backward()`)
+  and therefore needs a training iteration's memory, not an eval one's.
+* **`traversal_stats.csv` has a comma-separated header and space-separated rows**
+  (`train.py:217` against `train.py:511`). `split(",")` silently returns one field per row.
+  Same shape in `num_gaussians.csv`. `tests/test_traversal_coherence.py` pins both.
+* **`measure_fps.py` writes `fps.csv` into the run directory.** Running it twice to A/B
+  anything leaves the *last* arm in the canonical file that the FullCircle and myscenes FPS
+  columns are read from. Use `scripts/bench_ray_cache.py`, which writes only where `--out`
+  points.
 * **`bspline_eval` by advanced indexing is a performance trap.** `weights[:, idx]` with an
   `[H,W]` index makes the backward a scatter-add of ~5M values into ~50 addresses — total
   atomic contention. Measured at 512x512: **130 ms/iteration versus 3.4 ms for the native

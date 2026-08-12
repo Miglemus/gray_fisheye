@@ -1,0 +1,2419 @@
+{
+ "what": "ablation ladder on both camera families + the regularisation audit",
+ "gpu_used": false,
+ "noise_floor_db": 0.068,
+ "pinhole": {
+  "bicycle": {
+   "off": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_off",
+    "psnr_per_view_mean": 24.45327423773894,
+    "psnr_pooled": 23.731119716834954,
+    "n_views": 25,
+    "camera_opt": "off",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 0,
+    "n_trained_params": 0,
+    "delta_vs_off_db": 0.0,
+    "above_noise_floor": false
+   },
+   "tilt": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_tilt",
+    "psnr_per_view_mean": 24.41646590445465,
+    "psnr_pooled": 23.687982318811684,
+    "n_views": 25,
+    "camera_opt": "tilt",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "tilt"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 0,
+    "n_trained_params": 3,
+    "delta_vs_off_db": -0.0368083332842879,
+    "above_noise_floor": false
+   },
+   "radial": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_radial",
+    "psnr_per_view_mean": 24.479549583348465,
+    "psnr_pooled": 23.771065397363536,
+    "n_views": 25,
+    "camera_opt": "radial",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "tilt",
+     "radial"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 20,
+    "n_trained_params": 23,
+    "delta_vs_off_db": 0.026275345609526823,
+    "above_noise_floor": false
+   },
+   "ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_ana",
+    "psnr_per_view_mean": 24.853065614837355,
+    "psnr_pooled": 24.070370540771258,
+    "n_views": 25,
+    "camera_opt": "ana",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "tilt",
+     "radial",
+     "ana"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 100,
+    "n_trained_params": 103,
+    "delta_vs_off_db": 0.39979137709841694,
+    "above_noise_floor": true
+   },
+   "central_matched": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_central_matched",
+    "psnr_per_view_mean": 24.81520001287954,
+    "psnr_pooled": 24.005024543249114,
+    "n_views": 25,
+    "camera_opt": "central_matched",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "extra_knots"
+    ],
+    "knots": 18,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 180,
+    "n_trained_params": 183,
+    "delta_vs_off_db": 0.36192577514060176,
+    "above_noise_floor": true
+   },
+   "z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_z_only",
+    "psnr_per_view_mean": 24.492611312959934,
+    "psnr_pooled": 23.772890463728285,
+    "n_views": 25,
+    "camera_opt": "z_only",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "delta_vs_off_db": 0.03933707522099539,
+    "above_noise_floor": false
+   },
+   "noncentral": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_noncentral",
+    "psnr_per_view_mean": 24.890713212671162,
+    "psnr_pooled": 24.05939519238008,
+    "n_views": 25,
+    "camera_opt": "noncentral",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "delta_vs_off_db": 0.43743897493222406,
+    "above_noise_floor": true
+   }
+  },
+  "stump": {
+   "off": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_off",
+    "psnr_per_view_mean": 26.211077719847676,
+    "psnr_pooled": 25.66676960610284,
+    "n_views": 16,
+    "camera_opt": "off",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 0,
+    "n_trained_params": 0,
+    "delta_vs_off_db": 0.0,
+    "above_noise_floor": false
+   },
+   "radial": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_radial",
+    "psnr_per_view_mean": 26.239468553576287,
+    "psnr_pooled": 25.667689686612754,
+    "n_views": 16,
+    "camera_opt": "radial",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "tilt",
+     "radial"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 20,
+    "n_trained_params": 23,
+    "delta_vs_off_db": 0.028390833728611398,
+    "above_noise_floor": false
+   },
+   "central_matched": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_central_matched",
+    "psnr_per_view_mean": 26.299388336248548,
+    "psnr_pooled": 25.797040045062264,
+    "n_views": 16,
+    "camera_opt": "central_matched",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "extra_knots"
+    ],
+    "knots": 18,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 180,
+    "n_trained_params": 183,
+    "delta_vs_off_db": 0.08831061640087157,
+    "above_noise_floor": true
+   },
+   "z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_z_only",
+    "psnr_per_view_mean": 26.233584074441605,
+    "psnr_pooled": 25.725439479947166,
+    "n_views": 16,
+    "camera_opt": "z_only",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "delta_vs_off_db": 0.022506354593929245,
+    "above_noise_floor": false
+   },
+   "noncentral": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_noncentral",
+    "psnr_per_view_mean": 26.272471623580074,
+    "psnr_pooled": 25.75536513073078,
+    "n_views": 16,
+    "camera_opt": "noncentral",
+    "downsampling": "4",
+    "iterations": 15000,
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "delta_vs_off_db": 0.06139390373239806,
+    "above_noise_floor": false
+   }
+  }
+ },
+ "fisheye": {
+  "per_scene": {
+   "atrium": {
+    "off": {
+     "psnr": 27.878211147613918,
+     "delta_vs_off_db": 0.0,
+     "rings": [
+      26.52761687791839,
+      27.215683770143286,
+      27.835634196059758,
+      27.820005853281394,
+      27.77746942043087,
+      27.80209419818234,
+      27.049991758653803,
+      26.078393018102002
+     ],
+     "components": [],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 0,
+     "n_trained_params": 0
+    },
+    "noncentral_no_ana": {
+     "psnr": 27.973869018860395,
+     "delta_vs_off_db": 0.09565787124647684,
+     "rings": [
+      26.574107263676723,
+      27.278698590767686,
+      27.780091218493972,
+      27.771276504101905,
+      27.82873013466923,
+      27.838518676331464,
+      27.23854042513395,
+      26.42520746408675
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0
+     ],
+     "n_regularised_params": 28,
+     "n_trained_params": 31
+    },
+    "z_only": {
+     "psnr": 27.969354149442513,
+     "delta_vs_off_db": 0.0911430018285948,
+     "rings": [
+      26.554857223599964,
+      27.24102289331409,
+      27.821411100320464,
+      27.799456885844798,
+      27.838677175273805,
+      27.882078952152867,
+      27.15238877616141,
+      26.422604697629136
+     ],
+     "components": [
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 8,
+     "n_trained_params": 8
+    },
+    "noncentral": {
+     "psnr": 28.03578369576303,
+     "delta_vs_off_db": 0.15757254814911192,
+     "rings": [
+      26.671265457418606,
+      27.353969800462107,
+      27.90824825559639,
+      27.809851435173776,
+      27.89555422960168,
+      27.955150039702513,
+      27.26431411336921,
+      26.434544093015084
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 108,
+     "n_trained_params": 111
+    }
+   },
+   "classroom": {
+    "off": {
+     "psnr": 28.56208817501096,
+     "delta_vs_off_db": 0.0,
+     "rings": [
+      30.449552108532245,
+      26.65454448880064,
+      27.526036540818556,
+      27.2827828344155,
+      27.41834144595593,
+      26.867768376184458,
+      25.665466004161534,
+      25.204813103461966
+     ],
+     "components": [],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 0,
+     "n_trained_params": 0
+    },
+    "noncentral_no_ana": {
+     "psnr": 28.92083847832483,
+     "delta_vs_off_db": 0.3587503033138688,
+     "rings": [
+      30.578391912697413,
+      26.73283121157635,
+      27.524403847420626,
+      27.406712373940625,
+      27.310846784797796,
+      27.091460329277965,
+      26.442219974884154,
+      25.788185850991056
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0
+     ],
+     "n_regularised_params": 28,
+     "n_trained_params": 31
+    },
+    "z_only": {
+     "psnr": 28.876868383684698,
+     "delta_vs_off_db": 0.31478020867373857,
+     "rings": [
+      30.720446945214412,
+      27.23549398444021,
+      27.75692193621717,
+      27.21655392885971,
+      27.36903266034861,
+      26.955802320649155,
+      25.785349985323602,
+      25.62584680787546
+     ],
+     "components": [
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 8,
+     "n_trained_params": 8
+    },
+    "noncentral": {
+     "psnr": 28.972811333412082,
+     "delta_vs_off_db": 0.4107231584011224,
+     "rings": [
+      30.77914479612316,
+      27.03593979163639,
+      27.629497004797837,
+      27.307005393323745,
+      27.622439265350323,
+      27.103845980173027,
+      26.09690825985519,
+      25.7844933541959
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 108,
+     "n_trained_params": 111
+    }
+   },
+   "forest": {
+    "off": {
+     "psnr": 19.565205501240584,
+     "delta_vs_off_db": 0.0,
+     "rings": [
+      19.796933531044253,
+      19.60310326345273,
+      19.36089493349813,
+      19.318678693523776,
+      19.278115707090365,
+      18.978136800872136,
+      18.784519470037683,
+      18.372209026762743
+     ],
+     "components": [],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 0,
+     "n_trained_params": 0
+    },
+    "noncentral_no_ana": {
+     "psnr": 19.533887992353545,
+     "delta_vs_off_db": -0.03131750888703877,
+     "rings": [
+      19.74167561646036,
+      19.54734721670994,
+      19.27468573632831,
+      19.223796637824037,
+      19.168168674741356,
+      18.85232131512455,
+      18.66817343558329,
+      18.40052416447311
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0
+     ],
+     "n_regularised_params": 28,
+     "n_trained_params": 31
+    },
+    "z_only": {
+     "psnr": 19.50293059172034,
+     "delta_vs_off_db": -0.06227490952024439,
+     "rings": [
+      19.546838432248407,
+      19.481107206758917,
+      19.268478122652404,
+      19.121942651021577,
+      19.076632886395387,
+      18.82388695850149,
+      18.652082602426063,
+      18.380371586417056
+     ],
+     "components": [
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 8,
+     "n_trained_params": 8
+    },
+    "noncentral": {
+     "psnr": 19.6450525657043,
+     "delta_vs_off_db": 0.07984706446371703,
+     "rings": [
+      19.633964799833002,
+      19.54156070491079,
+      19.326013772379447,
+      19.291430362791967,
+      19.313139999785708,
+      19.1091671879637,
+      18.924987299928432,
+      18.676266131892742
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 108,
+     "n_trained_params": 111
+    }
+   },
+   "library": {
+    "off": {
+     "psnr": 31.580082532248504,
+     "delta_vs_off_db": 0.0,
+     "rings": [
+      28.300024903571213,
+      31.64010713189418,
+      32.305104917415264,
+      32.214458753885985,
+      32.08984559683727,
+      31.414306474101792,
+      30.407785600802242,
+      29.5245580930753
+     ],
+     "components": [],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 0,
+     "n_trained_params": 0
+    },
+    "noncentral_no_ana": {
+     "psnr": 31.76939921667372,
+     "delta_vs_off_db": 0.189316684425215,
+     "rings": [
+      28.27299547494867,
+      31.785405933291617,
+      32.44282202929326,
+      32.308615933972284,
+      32.13410153338071,
+      31.55853379155711,
+      30.89545901082883,
+      29.99513220622145
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0
+     ],
+     "n_regularised_params": 28,
+     "n_trained_params": 31
+    },
+    "z_only": {
+     "psnr": 31.782399594681024,
+     "delta_vs_off_db": 0.20231706243252034,
+     "rings": [
+      28.411651785252246,
+      31.78213376149565,
+      32.37621991951147,
+      32.23627794975513,
+      32.26758810838399,
+      31.650942430424838,
+      30.810677169266363,
+      29.936224235136063
+     ],
+     "components": [
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 8,
+     "n_trained_params": 8
+    },
+    "noncentral": {
+     "psnr": 31.853463727170464,
+     "delta_vs_off_db": 0.27338119492196,
+     "rings": [
+      28.48142114613298,
+      31.735767352518558,
+      32.44288656226902,
+      32.33993259086929,
+      32.326690051552845,
+      31.642317894374013,
+      30.99740378463123,
+      30.04624937179952
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 108,
+     "n_trained_params": 111
+    }
+   },
+   "reception": {
+    "off": {
+     "psnr": 27.277443061763968,
+     "delta_vs_off_db": 0.0,
+     "rings": [
+      25.2854795503352,
+      26.38531484914308,
+      26.473874131730536,
+      26.462696507516196,
+      26.63792077825434,
+      26.21083528962677,
+      25.527697801836283,
+      24.67225358737807
+     ],
+     "components": [],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 0,
+     "n_trained_params": 0
+    },
+    "ana": {
+     "psnr": 27.61777882957801,
+     "delta_vs_off_db": 0.34033576781404307,
+     "rings": [
+      25.678559790926524,
+      26.744220087984356,
+      26.849118744045857,
+      26.986782155536314,
+      27.119417699854456,
+      26.681397781225836,
+      26.121811966413603,
+      25.187200932380026
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 100,
+     "n_trained_params": 103
+    },
+    "central_matched": {
+     "psnr": 27.485993518383427,
+     "delta_vs_off_db": 0.20855045661945937,
+     "rings": [
+      25.438281809161808,
+      26.43014058370706,
+      26.661784714229796,
+      26.73121849281266,
+      26.908131051225187,
+      26.528631309367565,
+      25.993090959513793,
+      25.057681981046642
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "extra_knots"
+     ],
+     "knots": 18,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 180,
+     "n_trained_params": 183
+    },
+    "noncentral_no_ana": {
+     "psnr": 27.63743557612764,
+     "delta_vs_off_db": 0.35999251436367175,
+     "rings": [
+      25.734480983416226,
+      26.559803809460867,
+      26.758979543150858,
+      27.051830173128643,
+      27.08689016584461,
+      26.729278207364796,
+      26.538821753375963,
+      25.63622157483962
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0
+     ],
+     "n_regularised_params": 28,
+     "n_trained_params": 31
+    },
+    "z_only": {
+     "psnr": 27.69764264467318,
+     "delta_vs_off_db": 0.42019958290921267,
+     "rings": [
+      25.789968320399797,
+      26.716482772543017,
+      26.88814122029394,
+      27.31467228941396,
+      27.219959113124872,
+      26.851590972970953,
+      26.511918547879795,
+      25.615507541183643
+     ],
+     "components": [
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 8,
+     "n_trained_params": 8
+    },
+    "noncentral": {
+     "psnr": 27.751390512888488,
+     "delta_vs_off_db": 0.47394745112451986,
+     "rings": [
+      25.705263637380313,
+      26.70642862228435,
+      26.86016644566136,
+      27.257788326634845,
+      27.274334685293322,
+      26.94312634260687,
+      26.686956567385664,
+      25.877722901532305
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 108,
+     "n_trained_params": 111
+    }
+   },
+   "tunnel": {
+    "off": {
+     "psnr": 28.53749607577813,
+     "delta_vs_off_db": 0.0,
+     "rings": [
+      29.016736050007257,
+      27.51363548450392,
+      27.48857514304694,
+      27.14449380718254,
+      27.572221843265694,
+      26.805099203742454,
+      26.150957111830163,
+      25.60502416442937
+     ],
+     "components": [],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 0,
+     "n_trained_params": 0
+    },
+    "ana": {
+     "psnr": 28.63798823367339,
+     "delta_vs_off_db": 0.10049215789526045,
+     "rings": [
+      29.050067084869312,
+      27.3788332845332,
+      27.676558919253978,
+      26.988158669961933,
+      27.520095490205737,
+      26.952588169399746,
+      26.409742012765403,
+      25.649556887130984
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 100,
+     "n_trained_params": 103
+    },
+    "central_matched": {
+     "psnr": 28.592752527781546,
+     "delta_vs_off_db": 0.055256452003416,
+     "rings": [
+      29.09744963184499,
+      27.520217433091602,
+      27.73221116001078,
+      27.174192549343314,
+      27.47154255305365,
+      27.024066245122977,
+      26.359227641195496,
+      25.52125304123593
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "extra_knots"
+     ],
+     "knots": 18,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 180,
+     "n_trained_params": 183
+    },
+    "noncentral_no_ana": {
+     "psnr": 28.67029505600924,
+     "delta_vs_off_db": 0.13279898023111159,
+     "rings": [
+      29.268896952791813,
+      27.1364987590667,
+      27.558897181229586,
+      27.328727225545176,
+      27.490424477384032,
+      26.71395736394271,
+      26.334457945469424,
+      25.601027578842913
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0
+     ],
+     "n_regularised_params": 28,
+     "n_trained_params": 31
+    },
+    "z_only": {
+     "psnr": 28.64876968755504,
+     "delta_vs_off_db": 0.11127361177690887,
+     "rings": [
+      29.24193684274973,
+      27.28927024290401,
+      27.588534965031908,
+      27.32242815860403,
+      27.56112503781911,
+      26.900139781956213,
+      26.37383221551717,
+      25.637739781614215
+     ],
+     "components": [
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 8,
+     "n_trained_params": 8
+    },
+    "noncentral": {
+     "psnr": 28.728590994752125,
+     "delta_vs_off_db": 0.19109491897399522,
+     "rings": [
+      29.29432853167414,
+      27.500100738161485,
+      27.65132899625515,
+      27.284175043636605,
+      27.776445072330734,
+      26.89071347705887,
+      26.429482377568668,
+      25.651847096607142
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 108,
+     "n_trained_params": 111
+    }
+   },
+   "workshop": {
+    "off": {
+     "psnr": 27.198335359281423,
+     "delta_vs_off_db": 0.0,
+     "rings": [
+      26.852721510149983,
+      27.235205847683574,
+      26.663141125513317,
+      26.721352895856278,
+      26.670044301282356,
+      25.853364349837463,
+      25.052204979715917,
+      23.671059344816314
+     ],
+     "components": [],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 0,
+     "n_trained_params": 0
+    },
+    "ana": {
+     "psnr": 27.296949461937587,
+     "delta_vs_off_db": 0.098614102656164,
+     "rings": [
+      27.051659303623403,
+      27.33733534448696,
+      26.7409167613555,
+      26.9774150181561,
+      26.836764040509667,
+      25.959230050004614,
+      25.098931611099886,
+      23.68511906814493
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 100,
+     "n_trained_params": 103
+    },
+    "central_matched": {
+     "psnr": 27.329214008251867,
+     "delta_vs_off_db": 0.13087864897044454,
+     "rings": [
+      27.035747877919892,
+      27.452493239332366,
+      26.845628439442454,
+      26.94594324361566,
+      26.781712318994938,
+      25.99435345500484,
+      25.100582705844026,
+      23.77793275085481
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "extra_knots"
+     ],
+     "knots": 18,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 180,
+     "n_trained_params": 183
+    },
+    "noncentral_no_ana": {
+     "psnr": 27.93954757798144,
+     "delta_vs_off_db": 0.7412122187000172,
+     "rings": [
+      27.402859914173327,
+      28.00375421907472,
+      27.559460884178332,
+      27.63112289202548,
+      27.17939109453697,
+      26.417969224031893,
+      25.845179709853618,
+      25.025694173051562
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0
+     ],
+     "n_regularised_params": 28,
+     "n_trained_params": 31
+    },
+    "z_only": {
+     "psnr": 27.610510590548596,
+     "delta_vs_off_db": 0.4121752312671738,
+     "rings": [
+      27.325503072142855,
+      27.89354391422573,
+      27.30128821973509,
+      27.303760688901324,
+      27.143769301784214,
+      26.16633439777884,
+      25.468995983733315,
+      24.268772724422767
+     ],
+     "components": [
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [],
+     "n_regularised_params": 8,
+     "n_trained_params": 8
+    },
+    "noncentral": {
+     "psnr": 27.941505894740043,
+     "delta_vs_off_db": 0.7431705354586207,
+     "rings": [
+      27.491553011642537,
+      28.03481575330125,
+      27.633425075873163,
+      27.66150417142304,
+      27.23902590217655,
+      26.46200784221866,
+      25.85135457211381,
+      25.059660999461776
+     ],
+     "components": [
+      "tilt",
+      "radial",
+      "ana",
+      "z"
+     ],
+     "knots": 10,
+     "active_channels": [
+      0,
+      1,
+      2,
+      3,
+      4
+     ],
+     "n_regularised_params": 108,
+     "n_trained_params": 111
+    }
+   }
+  },
+  "summary": {
+   "off": {
+    "mean_delta_db_over_3_full_ladder_scenes": 0.0,
+    "n_scenes_3": 3,
+    "mean_delta_db_over_all_scenes_present": 0.0,
+    "n_scenes_all": 7,
+    "components": [],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 0,
+    "n_trained_params": 0
+   },
+   "ana": {
+    "mean_delta_db_over_3_full_ladder_scenes": 0.17981400945515583,
+    "n_scenes_3": 3,
+    "mean_delta_db_over_all_scenes_present": 0.17981400945515583,
+    "n_scenes_all": 3,
+    "components": [
+     "tilt",
+     "radial",
+     "ana"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 100,
+    "n_trained_params": 103
+   },
+   "central_matched": {
+    "mean_delta_db_over_3_full_ladder_scenes": 0.13156185253110664,
+    "n_scenes_3": 3,
+    "mean_delta_db_over_all_scenes_present": 0.13156185253110664,
+    "n_scenes_all": 3,
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "extra_knots"
+    ],
+    "knots": 18,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 180,
+    "n_trained_params": 183
+   },
+   "noncentral_no_ana": {
+    "mean_delta_db_over_3_full_ladder_scenes": 0.4113345710982668,
+    "n_scenes_3": 3,
+    "mean_delta_db_over_all_scenes_present": 0.2637730090561889,
+    "n_scenes_all": 7,
+    "components": [
+     "tilt",
+     "radial",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 28,
+    "n_trained_params": 31
+   },
+   "z_only": {
+    "mean_delta_db_over_3_full_ladder_scenes": 0.3145494753177651,
+    "n_scenes_3": 3,
+    "mean_delta_db_over_all_scenes_present": 0.21280196990970066,
+    "n_scenes_all": 7,
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8
+   },
+   "noncentral": {
+    "mean_delta_db_over_3_full_ladder_scenes": 0.4694043018523786,
+    "n_scenes_3": 3,
+    "mean_delta_db_over_all_scenes_present": 0.3328195530704353,
+    "n_scenes_all": 7,
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111
+   }
+  },
+  "full_ladder_scenes": [
+   "tunnel",
+   "workshop",
+   "reception"
+  ]
+ },
+ "regularisation": {
+  "runs": {
+   "myscenes_rttpf/atrium/noncentral_no_ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/atrium_noncentral_no_ana",
+    "rung": "noncentral_no_ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 1.2969742398638574e-06,
+    "penalty_per_lens": {
+     "1": 1.2969742398638574e-06
+    },
+    "final_l1": 0.0222132,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.005838754613760545,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 28,
+    "n_trained_params": 31,
+    "track": "myscenes_rttpf",
+    "scene": "atrium"
+   },
+   "myscenes_rttpf/atrium/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/atrium_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 7.201872540463228e-07,
+    "penalty_per_lens": {
+     "1": 7.201872540463228e-07
+    },
+    "final_l1": 0.02216979,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0032485073338372745,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "myscenes_rttpf",
+    "scene": "atrium"
+   },
+   "myscenes_rttpf/atrium/noncentral": {
+    "run": "/workspace/gray/tmp/final/atrium_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 1.2619512324363313e-06,
+    "penalty_per_lens": {
+     "1": 1.2619512324363313e-06
+    },
+    "final_l1": 0.0222616,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.00566873554657496,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "myscenes_rttpf",
+    "scene": "atrium"
+   },
+   "myscenes_rttpf/classroom/noncentral_no_ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/classroom_noncentral_no_ana",
+    "rung": "noncentral_no_ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 9.70729661524672e-07,
+    "penalty_per_lens": {
+     "1": 9.70729661524672e-07
+    },
+    "final_l1": 0.01367936,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.007096309048995508,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 28,
+    "n_trained_params": 31,
+    "track": "myscenes_rttpf",
+    "scene": "classroom"
+   },
+   "myscenes_rttpf/classroom/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/classroom_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 4.136233474127948e-07,
+    "penalty_per_lens": {
+     "1": 4.136233474127948e-07
+    },
+    "final_l1": 0.01371457,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.003015941056940136,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "myscenes_rttpf",
+    "scene": "classroom"
+   },
+   "myscenes_rttpf/classroom/noncentral": {
+    "run": "/workspace/gray/tmp/final/classroom_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 1.2377763732729364e-06,
+    "penalty_per_lens": {
+     "1": 1.2377763732729364e-06
+    },
+    "final_l1": 0.0136628,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.009059463457511904,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "myscenes_rttpf",
+    "scene": "classroom"
+   },
+   "myscenes_rttpf/forest/noncentral_no_ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/forest_noncentral_no_ana",
+    "rung": "noncentral_no_ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.5377396966064225e-06,
+    "penalty_per_lens": {
+     "1": 2.5377396966064225e-06
+    },
+    "final_l1": 0.05373254,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.004722910356752951,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 28,
+    "n_trained_params": 31,
+    "track": "myscenes_rttpf",
+    "scene": "forest"
+   },
+   "myscenes_rttpf/forest/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/forest_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 8.812583837425337e-07,
+    "penalty_per_lens": {
+     "1": 8.812583837425337e-07
+    },
+    "final_l1": 0.05385031,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0016364963985212597,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "myscenes_rttpf",
+    "scene": "forest"
+   },
+   "myscenes_rttpf/forest/noncentral": {
+    "run": "/workspace/gray/tmp/final/forest_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 5.756702852295348e-06,
+    "penalty_per_lens": {
+     "1": 5.756702852295348e-06
+    },
+    "final_l1": 0.05440494,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.010581213493288198,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "myscenes_rttpf",
+    "scene": "forest"
+   },
+   "myscenes_rttpf/library/noncentral_no_ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/library_noncentral_no_ana",
+    "rung": "noncentral_no_ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 6.994507891278089e-07,
+    "penalty_per_lens": {
+     "1": 6.994507891278089e-07
+    },
+    "final_l1": 0.01099762,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.006360019614496673,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 28,
+    "n_trained_params": 31,
+    "track": "myscenes_rttpf",
+    "scene": "library"
+   },
+   "myscenes_rttpf/library/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/library_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 3.8922683870623586e-07,
+    "penalty_per_lens": {
+     "1": 3.8922683870623586e-07
+    },
+    "final_l1": 0.01102266,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0035311516340541743,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "myscenes_rttpf",
+    "scene": "library"
+   },
+   "myscenes_rttpf/library/noncentral": {
+    "run": "/workspace/gray/tmp/final/library_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 9.616939661327707e-07,
+    "penalty_per_lens": {
+     "1": 9.616939661327707e-07
+    },
+    "final_l1": 0.01097677,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.008761174426837501,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "myscenes_rttpf",
+    "scene": "library"
+   },
+   "myscenes_rttpf/reception/ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/reception_ana",
+    "rung": "ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 4.108131793145731e-07,
+    "penalty_per_lens": {
+     "1": 4.108131793145731e-07
+    },
+    "final_l1": 0.01970579,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.002084733366764657,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 100,
+    "n_trained_params": 103,
+    "track": "myscenes_rttpf",
+    "scene": "reception"
+   },
+   "myscenes_rttpf/reception/central_matched": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/reception_central_matched",
+    "rung": "central_matched",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 3.8424799754466225e-07,
+    "penalty_per_lens": {
+     "1": 3.8424799754466225e-07
+    },
+    "final_l1": 0.01976221,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.001944357425331794,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "extra_knots"
+    ],
+    "knots": 18,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 180,
+    "n_trained_params": 183,
+    "track": "myscenes_rttpf",
+    "scene": "reception"
+   },
+   "myscenes_rttpf/reception/noncentral_no_ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/reception_noncentral_no_ana",
+    "rung": "noncentral_no_ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.3442828216957423e-06,
+    "penalty_per_lens": {
+     "1": 2.3442828216957423e-06
+    },
+    "final_l1": 0.01978255,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.011850256017023802,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 28,
+    "n_trained_params": 31,
+    "track": "myscenes_rttpf",
+    "scene": "reception"
+   },
+   "myscenes_rttpf/reception/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/reception_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 9.476407831243704e-07,
+    "penalty_per_lens": {
+     "1": 9.476407831243704e-07
+    },
+    "final_l1": 0.01958225,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0048392844699887425,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "myscenes_rttpf",
+    "scene": "reception"
+   },
+   "myscenes_rttpf/reception/noncentral": {
+    "run": "/workspace/gray/tmp/final/reception_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.568173327972545e-06,
+    "penalty_per_lens": {
+     "1": 2.568173327972545e-06
+    },
+    "final_l1": 0.01965748,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.013064611170773389,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "myscenes_rttpf",
+    "scene": "reception"
+   },
+   "myscenes_rttpf/tunnel/ana": {
+    "run": "/workspace/gray/tmp/final/tunnel_ana",
+    "rung": "ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 1.1049116324102216e-07,
+    "penalty_per_lens": {
+     "1": 1.1049116324102216e-07
+    },
+    "final_l1": 0.01257978,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0008783234940596906,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 100,
+    "n_trained_params": 103,
+    "track": "myscenes_rttpf",
+    "scene": "tunnel"
+   },
+   "myscenes_rttpf/tunnel/central_matched": {
+    "run": "/workspace/gray/tmp/final/tunnel_central_matched",
+    "rung": "central_matched",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 1.398580332079291e-07,
+    "penalty_per_lens": {
+     "1": 1.398580332079291e-07
+    },
+    "final_l1": 0.01261561,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0011086109447575592,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "extra_knots"
+    ],
+    "knots": 18,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 180,
+    "n_trained_params": 183,
+    "track": "myscenes_rttpf",
+    "scene": "tunnel"
+   },
+   "myscenes_rttpf/tunnel/noncentral_no_ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/tunnel_noncentral_no_ana",
+    "rung": "noncentral_no_ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 1.3575729828829708e-06,
+    "penalty_per_lens": {
+     "1": 1.3575729828829708e-06
+    },
+    "final_l1": 0.01265443,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.010728045300206891,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 28,
+    "n_trained_params": 31,
+    "track": "myscenes_rttpf",
+    "scene": "tunnel"
+   },
+   "myscenes_rttpf/tunnel/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/tunnel_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 6.967741228436353e-08,
+    "penalty_per_lens": {
+     "1": 6.967741228436353e-08
+    },
+    "final_l1": 0.0125925,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0005533246955280011,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "myscenes_rttpf",
+    "scene": "tunnel"
+   },
+   "myscenes_rttpf/tunnel/noncentral": {
+    "run": "/workspace/gray/tmp/final/tunnel_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 1.5977255372945364e-06,
+    "penalty_per_lens": {
+     "1": 1.5977255372945364e-06
+    },
+    "final_l1": 0.01252885,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.01275237182418607,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "myscenes_rttpf",
+    "scene": "tunnel"
+   },
+   "myscenes_rttpf/workshop/ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/workshop_ana",
+    "rung": "ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.6529721480983426e-07,
+    "penalty_per_lens": {
+     "1": 2.6529721480983426e-07
+    },
+    "final_l1": 0.01580277,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0016788019746527619,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 100,
+    "n_trained_params": 103,
+    "track": "myscenes_rttpf",
+    "scene": "workshop"
+   },
+   "myscenes_rttpf/workshop/central_matched": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/workshop_central_matched",
+    "rung": "central_matched",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.9152191757475524e-07,
+    "penalty_per_lens": {
+     "1": 2.9152191757475524e-07
+    },
+    "final_l1": 0.01581138,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0018437474627436394,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "extra_knots"
+    ],
+    "knots": 18,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 180,
+    "n_trained_params": 183,
+    "track": "myscenes_rttpf",
+    "scene": "workshop"
+   },
+   "myscenes_rttpf/workshop/noncentral_no_ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/workshop_noncentral_no_ana",
+    "rung": "noncentral_no_ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.079011589941615e-05,
+    "penalty_per_lens": {
+     "1": 2.079011589941615e-05
+    },
+    "final_l1": 0.01524673,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.13635786755203347,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 28,
+    "n_trained_params": 31,
+    "track": "myscenes_rttpf",
+    "scene": "workshop"
+   },
+   "myscenes_rttpf/workshop/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/final/workshop_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 3.998283718829043e-06,
+    "penalty_per_lens": {
+     "1": 3.998283718829043e-06
+    },
+    "final_l1": 0.0155372,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.025733618147600872,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "myscenes_rttpf",
+    "scene": "workshop"
+   },
+   "myscenes_rttpf/workshop/noncentral": {
+    "run": "/workspace/gray/tmp/final/workshop_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.117459601663541e-05,
+    "penalty_per_lens": {
+     "1": 2.117459601663541e-05
+    },
+    "final_l1": 0.01518348,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.13945812169960647,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "myscenes_rttpf",
+    "scene": "workshop"
+   },
+   "mipnerf360_pinhole/bicycle/tilt": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_tilt",
+    "rung": "tilt",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 0.0,
+    "penalty_per_lens": {
+     "1": 0.0
+    },
+    "final_l1": 0.03358031,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 0,
+    "n_trained_params": 3,
+    "track": "mipnerf360_pinhole",
+    "scene": "bicycle"
+   },
+   "mipnerf360_pinhole/bicycle/radial": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_radial",
+    "rung": "radial",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.9207743580172973e-06,
+    "penalty_per_lens": {
+     "1": 2.9207743580172973e-06
+    },
+    "final_l1": 0.03349581,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.00871982005515704,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 20,
+    "n_trained_params": 23,
+    "track": "mipnerf360_pinhole",
+    "scene": "bicycle"
+   },
+   "mipnerf360_pinhole/bicycle/ana": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_ana",
+    "rung": "ana",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 8.277922515844694e-06,
+    "penalty_per_lens": {
+     "1": 8.277922515844694e-06
+    },
+    "final_l1": 0.03267361,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.025335194108776757,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 100,
+    "n_trained_params": 103,
+    "track": "mipnerf360_pinhole",
+    "scene": "bicycle"
+   },
+   "mipnerf360_pinhole/bicycle/central_matched": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_central_matched",
+    "rung": "central_matched",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 3.628606327765738e-07,
+    "penalty_per_lens": {
+     "1": 3.628606327765738e-07
+    },
+    "final_l1": 0.03278328,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0011068466388249555,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "extra_knots"
+    ],
+    "knots": 18,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 180,
+    "n_trained_params": 183,
+    "track": "mipnerf360_pinhole",
+    "scene": "bicycle"
+   },
+   "mipnerf360_pinhole/bicycle/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 1.0079074272653087e-05,
+    "penalty_per_lens": {
+     "1": 1.0079074272653087e-05
+    },
+    "final_l1": 0.03351073,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.030077155205670204,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "mipnerf360_pinhole",
+    "scene": "bicycle"
+   },
+   "mipnerf360_pinhole/bicycle/noncentral": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/bicycle_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 9.68458033639763e-06,
+    "penalty_per_lens": {
+     "1": 9.68458033639763e-06
+    },
+    "final_l1": 0.03276183,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.029560559762374785,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "mipnerf360_pinhole",
+    "scene": "bicycle"
+   },
+   "mipnerf360_pinhole/stump/radial": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_radial",
+    "rung": "radial",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 6.624160296979653e-06,
+    "penalty_per_lens": {
+     "1": 6.624160296979653e-06
+    },
+    "final_l1": 0.02028455,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.03265618560421431,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0
+    ],
+    "n_regularised_params": 20,
+    "n_trained_params": 23,
+    "track": "mipnerf360_pinhole",
+    "scene": "stump"
+   },
+   "mipnerf360_pinhole/stump/central_matched": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_central_matched",
+    "rung": "central_matched",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 3.9948614926288424e-07,
+    "penalty_per_lens": {
+     "1": 3.9948614926288424e-07
+    },
+    "final_l1": 0.0202936,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.00196853268647694,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "extra_knots"
+    ],
+    "knots": 18,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 180,
+    "n_trained_params": 183,
+    "track": "mipnerf360_pinhole",
+    "scene": "stump"
+   },
+   "mipnerf360_pinhole/stump/z_only": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_z_only",
+    "rung": "z_only",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 2.2242937484406865e-06,
+    "penalty_per_lens": {
+     "1": 2.2242937484406865e-06
+    },
+    "final_l1": 0.02028126,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.010967236495369058,
+    "inactive_weight_max_abs": {},
+    "components": [
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [],
+    "n_regularised_params": 8,
+    "n_trained_params": 8,
+    "track": "mipnerf360_pinhole",
+    "scene": "stump"
+   },
+   "mipnerf360_pinhole/stump/noncentral": {
+    "run": "/workspace/gray/worktrees/noncentral-camera/tmp/mipnerf360/stump_noncentral",
+    "rung": "noncentral",
+    "l2": 0.01,
+    "curvature": 0.01,
+    "penalty": 7.497882759253116e-06,
+    "penalty_per_lens": {
+     "1": 7.497882759253116e-06
+    },
+    "final_l1": 0.02022384,
+    "final_l1_iteration": 15000,
+    "penalty_over_l1_percent": 0.0370744762579862,
+    "inactive_weight_max_abs": {
+     "1": 0.0
+    },
+    "components": [
+     "tilt",
+     "radial",
+     "ana",
+     "z"
+    ],
+    "knots": 10,
+    "active_channels": [
+     0,
+     1,
+     2,
+     3,
+     4
+    ],
+    "n_regularised_params": 108,
+    "n_trained_params": 111,
+    "track": "mipnerf360_pinhole",
+    "scene": "stump"
+   }
+  },
+  "verdict": {
+   "n_runs": 37,
+   "penalty_over_l1_percent_min": 0.0,
+   "penalty_over_l1_percent_max": 0.13945812169960647,
+   "claim": "the L2/curvature penalty is INERT: it never exceeds a fraction of a percent of the data loss, so it cannot explain a rung-to-rung difference of any size that this project measures.",
+   "sign_is_inverted": {
+    "reception": {
+     "z_only_params": 8,
+     "z_only_penalty": 9.476407831243704e-07,
+     "central_matched_params": 180,
+     "central_matched_penalty": 3.8424799754466225e-07,
+     "z_only_pays_x_more": 2.466221786918287
+    },
+    "tunnel": {
+     "z_only_params": 8,
+     "z_only_penalty": 6.967741228436353e-08,
+     "central_matched_params": 180,
+     "central_matched_penalty": 1.398580332079291e-07,
+     "z_only_pays_x_more": 0.49820100201733164
+    },
+    "workshop": {
+     "z_only_params": 8,
+     "z_only_penalty": 3.998283718829043e-06,
+     "central_matched_params": 180,
+     "central_matched_penalty": 2.9152191757475524e-07,
+     "z_only_pays_x_more": 13.715207940767469
+    }
+   },
+   "not_commensurable": "z_weights is in units of the scene radius (config.py:208), theta/phi_weights in radians; camera_opt_reg_l2 = 1e-2 is applied to both, so equal coefficients are NOT equal physical pressure. Harmless only because the whole term is inert."
+  }
+ },
+ "interaction_2x2": {
+  "pinhole/bicycle": {
+   "off": 0.0,
+   "tilt": -0.0368083332842879,
+   "radial": 0.026275345609526823,
+   "ana": 0.39979137709841694,
+   "central_matched": 0.36192577514060176,
+   "z_only": 0.03933707522099539,
+   "noncentral": 0.43743897493222406
+  },
+  "pinhole/stump": {
+   "off": 0.0,
+   "radial": 0.028390833728611398,
+   "central_matched": 0.08831061640087157,
+   "z_only": 0.022506354593929245,
+   "noncentral": 0.06139390373239806
+  },
+  "fisheye/myscenes_3_full_ladder_scenes": {
+   "off": 0.0,
+   "ana": 0.17981400945515583,
+   "central_matched": 0.13156185253110664,
+   "noncentral_no_ana": 0.4113345710982668,
+   "z_only": 0.3145494753177651,
+   "noncentral": 0.4694043018523786
+  },
+  "fisheye/myscenes_all_scenes_present": {
+   "off": 0.0,
+   "ana": 0.17981400945515583,
+   "central_matched": 0.13156185253110664,
+   "noncentral_no_ana": 0.2637730090561889,
+   "z_only": 0.21280196990970066,
+   "noncentral": 0.3328195530704353
+  }
+ },
+ "conventions": {
+  "pinhole_metric": "full-frame PSNR, per-view mean (dose_response.pinhole_scores)",
+  "fisheye_metric": "masked PSNR at r=0.95, per-view mean (collect/rungs.py)",
+  "never_pooled": "the two families are never averaged together; only deltas vs each scene's own `off` are compared, and only qualitatively.",
+  "n": "n = 1 run per cell, no seeds. Any |delta| below 0.068 dB is a zero."
+ }
+}

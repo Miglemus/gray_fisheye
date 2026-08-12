@@ -34,9 +34,17 @@ cancel exactly, so `d_world = cam_info.R @ b` with `cam_info.R` the COLMAP c2w r
 from __future__ import annotations
 
 import math
+import os
 
 import torch
 import torch.nn as nn
+
+# * Escape hatch for the pose-independent ray cache (see `CameraModel.camera_frame`).
+# * Deliberately an environment variable rather than a config field: `gray/config.py` is
+# * edited by several parallel sessions and a new flag there would collide. Set
+# * GRAY_NO_RAY_CACHE=1 to force the un-cached path; `tests/test_camera_model_cache.py`
+# * toggles `CameraModel.ray_cache_enabled` directly instead.
+RAY_CACHE_DEFAULT = os.environ.get("GRAY_NO_RAY_CACHE", "") not in ("1", "true", "True")
 
 # * Which residual components each ablation rung switches on.
 RUNGS: dict[str, tuple[str, ...]] = {
@@ -165,16 +173,22 @@ def skew_rotate(omega: torch.Tensor, vectors: torch.Tensor) -> torch.Tensor:
 class LensResidual(nn.Module):
     """Shared residual parameters for one physical lens (one COLMAP camera uid)."""
 
-    def __init__(self, components: tuple[str, ...], num_knots: int, num_knots_z: int):
+    def __init__(
+        self,
+        components: tuple[str, ...],
+        num_knots: int,
+        num_knots_z: int,
+        device: str = "cuda",
+    ):
         super().__init__()
         self.components = set(components)
         knots = num_knots + (num_knots_z if "extra_knots" in self.components else 0)
         self.num_knots = knots
 
-        self.omega = nn.Parameter(torch.zeros(3, device="cuda"))
-        self.theta_weights = nn.Parameter(torch.zeros(TOTAL_CHANNELS, knots, device="cuda"))
-        self.phi_weights = nn.Parameter(torch.zeros(TOTAL_CHANNELS, knots, device="cuda"))
-        self.z_weights = nn.Parameter(torch.zeros(1, num_knots_z, device="cuda"))
+        self.omega = nn.Parameter(torch.zeros(3, device=device))
+        self.theta_weights = nn.Parameter(torch.zeros(TOTAL_CHANNELS, knots, device=device))
+        self.phi_weights = nn.Parameter(torch.zeros(TOTAL_CHANNELS, knots, device=device))
+        self.z_weights = nn.Parameter(torch.zeros(1, num_knots_z, device=device))
 
     def active_channels(self) -> list[int]:
         channels = []
@@ -239,12 +253,13 @@ class PoseResidual(nn.Module):
     separate ablation rung for exactly that reason.
     """
 
-    def __init__(self, lr_rotation: float, lr_translation: float):
+    def __init__(self, lr_rotation: float, lr_translation: float, device: str = "cuda"):
         super().__init__()
         self.rotation = nn.ParameterDict()
         self.translation = nn.ParameterDict()
         self.lr_rotation = lr_rotation
         self.lr_translation = lr_translation
+        self.device = device
 
     @staticmethod
     def _key(image_name: str) -> str:
@@ -254,8 +269,8 @@ class PoseResidual(nn.Module):
         "Create the per-view block if missing; returns True when it was just created."
         if key in self.rotation:
             return False
-        self.rotation[key] = nn.Parameter(torch.zeros(3, device="cuda"))
-        self.translation[key] = nn.Parameter(torch.zeros(3, device="cuda"))
+        self.rotation[key] = nn.Parameter(torch.zeros(3, device=self.device))
+        self.translation[key] = nn.Parameter(torch.zeros(3, device=self.device))
         return True
 
     def block(self, image_name: str):
@@ -266,9 +281,10 @@ class PoseResidual(nn.Module):
 class CameraModel(nn.Module):
     """Owns the residual lens parameters, their optimizer, and the ray synthesis."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, device: str = "cuda"):
         super().__init__()
         self.cfg = cfg
+        self.device = device
         self.rung = cfg.camera_opt
         self.components = RUNGS[self.rung]
         # * Scene scale enters through the LEARNING RATE only, never through forward().
@@ -281,13 +297,18 @@ class CameraModel(nn.Module):
         self.lenses = nn.ModuleDict()
         self.raxels = nn.ParameterDict()
         self.pose = (
-            PoseResidual(cfg.pose_opt_lr_rotation, cfg.pose_opt_lr_translation)
+            PoseResidual(cfg.pose_opt_lr_rotation, cfg.pose_opt_lr_translation, device=device)
             if cfg.pose_opt
             else None
         )
         self.optimizer = torch.optim.Adam([{"params": [], "lr": 0.0, "name": "placeholder"}])
         self._theta_max = math.pi / 2.0
         self._basis_cache = {}
+        # * Pose-independent half of the ray synthesis, keyed by (base cache key, lens uid).
+        # * See `camera_frame()`; invalidated by `invalidate_ray_cache()` on every event that
+        # * can move a parameter.
+        self.ray_cache_enabled = RAY_CACHE_DEFAULT
+        self._ray_cache = {}
 
     def spline_basis(self, base: dict, num_ctrl: int) -> torch.Tensor:
         "Cached [N, K] B-spline basis for this camera/resolution and control-point count."
@@ -298,11 +319,23 @@ class CameraModel(nn.Module):
 
     # ------------------------------------------------------------------ parameter blocks
 
+    def invalidate_ray_cache(self):
+        """Drop the pose-independent ray cache.
+
+        Must be called on every event that can move a residual parameter, otherwise a render
+        would silently reuse the previous parameters -- the same failure mode as the
+        stale-bearing collision documented in IMPLEMENTATION.md, one level up.
+        """
+        self._ray_cache.clear()
+
     def lens(self, uid: int) -> LensResidual:
         key = str(uid)
         if key not in self.lenses:
             lens = LensResidual(
-                self.components, self.cfg.camera_opt_knots, self.cfg.camera_opt_knots_z
+                self.components,
+                self.cfg.camera_opt_knots,
+                self.cfg.camera_opt_knots_z,
+                device=self.device,
             )
             self.lenses[key] = lens
             lrs = {
@@ -340,6 +373,7 @@ class CameraModel(nn.Module):
         constructed model owns none of them and `load_state_dict` would reject every saved
         `camera_model.*` key. render.py / metrics.py hit this on the first reload.
         """
+        self.invalidate_ray_cache()
         for key, value in state_dict.items():
             if not key.startswith("camera_model."):
                 continue
@@ -349,7 +383,7 @@ class CameraModel(nn.Module):
             elif parts[1] == "raxels":
                 name = parts[2]
                 if name not in self.raxels:
-                    self.raxels[name] = nn.Parameter(torch.zeros_like(value, device="cuda"))
+                    self.raxels[name] = nn.Parameter(torch.zeros_like(value, device=self.device))
                     self.optimizer.add_param_group(
                         {
                             "params": [self.raxels[name]],
@@ -368,7 +402,7 @@ class CameraModel(nn.Module):
             grid_h = max(height // stride, 2)
             grid_w = max(width // stride, 2)
             # * 5 channels: 2 bearing offsets (meridional, sagittal) + 3 origin offsets.
-            self.raxels[key] = nn.Parameter(torch.zeros(5, grid_h, grid_w, device="cuda"))
+            self.raxels[key] = nn.Parameter(torch.zeros(5, grid_h, grid_w, device=self.device))
             self.optimizer.add_param_group(
                 {
                     "params": [self.raxels[key]],
@@ -380,10 +414,27 @@ class CameraModel(nn.Module):
 
     # ------------------------------------------------------------------ ray synthesis
 
-    def forward(self, cam_info, base: dict, height: int, width: int):
-        """Return world-space (origin, direction), both [H, W, 3] float32 on CUDA."""
+    def camera_frame(self, cam_info, base: dict, height: int, width: int) -> dict:
+        """The POSE-INDEPENDENT half of the ray synthesis, in the OpenCV camera frame.
+
+        Everything here is a function of (lens parameters, base bearings) only, and the base
+        bearings are themselves a function of (camera model, intrinsics, render resolution) --
+        `Raytracer.base_bearings()` caches them on exactly that key. Nothing below reads the
+        pose, so the result is shared by every view taken with a given camera, which is what
+        makes it cacheable across a whole eval pass.
+
+        Returns a dict with:
+          `bearings`      [H, W, 3] residual-rotated unit bearings, camera frame, 0 = invalid
+          `z_profile`     [H, W] axial pupil offset `z(theta) - z(0)`, or None (central rungs)
+          `raxel_offset`  [H, W, 3] the raxel rung's post-rotation offset, or None
+
+        Those two tables are exactly what a CUDA-side `Camera::bearing_table` /
+        `origin_offset_table` would hold, so this split is also the shape the eventual native
+        port needs -- see IMPLEMENTATION.md, "the FPS tax is the Python path".
+        """
         bearings = base["bearings"]  # [H, W, 3], unit in the OpenCV camera frame, 0 = invalid
         lens = self.lens(cam_info.uid)
+        sampled = None
 
         delta_theta = None
         delta_phi = None
@@ -419,6 +470,32 @@ class CameraModel(nn.Module):
         if "tilt" in lens.components:
             bearings = skew_rotate(lens.omega, bearings)
 
+        z_profile = None
+        if "z" in lens.components:
+            z_basis = self.spline_basis(base, lens.z_weights.shape[-1])
+            profile = bspline_eval_basis(lens.z_weights, z_basis, base["theta01"].shape)[0]
+            gauge = bspline_eval(lens.z_weights, base["theta01"].new_zeros(()))[0]
+            z_profile = profile - gauge
+
+        raxel_offset = None
+        if sampled is not None:
+            # * Kept verbatim from the original expression (multiply, then add), so the
+            # * cached and un-cached paths agree bit for bit. NOTE this offset is added to
+            # * the WORLD-space direction -- see IMPLEMENTATION.md limitation 8; it is a
+            # * per-pixel world bias, not a camera model. Caching does not change that.
+            raxel_offset = sampled[2:].permute(1, 2, 0) * base["valid"].unsqueeze(-1)
+
+        return {"bearings": bearings, "z_profile": z_profile, "raxel_offset": raxel_offset}
+
+    def apply_pose(self, cam_info, base: dict, frame: dict, height: int, width: int):
+        """The PER-IMAGE half: rotate the camera-frame field into the world by this pose.
+
+        This is the only part that may ever depend on the view. The optional per-view SE(3)
+        residual lives here too, and so does the world-space optical axis the non-central
+        origin offset is laid along -- `z(theta)` is a scalar in the camera frame, but the
+        direction it displaces the ray origin along rotates with the camera.
+        """
+        bearings = frame["bearings"]
         rotation = base["rotation"]  # [3, 3] c2w, OpenCV convention
         origin = base["origin"]  # [3]
         if self.pose is not None:
@@ -432,8 +509,8 @@ class CameraModel(nn.Module):
 
         direction = bearings @ rotation.transpose(0, 1)
 
-        if "raxel" in lens.components:
-            direction = direction + sampled[2:].permute(1, 2, 0) * base["valid"].unsqueeze(-1)
+        if frame["raxel_offset"] is not None:
+            direction = direction + frame["raxel_offset"]
 
         # * Renormalize (a no-op for the pure-rotation rungs, required once raxel offsets
         # * enter) while keeping the zero sentinel outside the lens disk exactly zero.
@@ -442,19 +519,48 @@ class CameraModel(nn.Module):
         direction = direction * base["valid"].unsqueeze(-1)
 
         ray_origin = origin.view(1, 1, 3).expand(height, width, 3)
-        if "z" in lens.components:
-            z_basis = self.spline_basis(base, lens.z_weights.shape[-1])
-            profile = bspline_eval_basis(lens.z_weights, z_basis, base["theta01"].shape)[0]
-            gauge = bspline_eval(lens.z_weights, base["theta01"].new_zeros(()))[0]
+        if frame["z_profile"] is not None:
             axis = rotation[:, 2]  # * OpenCV +z: the optical axis, in world space
-            ray_origin = ray_origin + (profile - gauge).unsqueeze(-1) * axis
+            ray_origin = ray_origin + frame["z_profile"].unsqueeze(-1) * axis
 
         return ray_origin.contiguous(), direction.contiguous()
+
+    def forward(self, cam_info, base: dict, height: int, width: int):
+        """Return world-space (origin, direction), both [H, W, 3] float32 on CUDA.
+
+        Splits into the pose-independent `camera_frame()` and the per-image `apply_pose()`,
+        and reuses the former across views of the same camera whenever that is provably safe.
+
+        **When the cache is used.** Only under `no_grad`, i.e. render / eval / FPS. Under
+        autograd the camera-frame tensors carry a graph that the optimizer step consumes and
+        the parameters move every iteration, so training always recomputes -- caching there
+        would silently freeze the residual at its first value.
+
+        **What invalidates it.** `step()` (a parameter moved), `set_frozen()` (phase A/B
+        boundary), `materialize_from_state_dict()` and `_load_from_state_dict()` (a checkpoint
+        arrived). Anything that pokes a parameter tensor by hand must call
+        `invalidate_ray_cache()`; there is no cheap way to detect that without a device sync.
+        """
+        cacheable = (
+            self.ray_cache_enabled
+            and not torch.is_grad_enabled()
+            and base.get("cache_key") is not None
+        )
+        if not cacheable:
+            frame = self.camera_frame(cam_info, base, height, width)
+            return self.apply_pose(cam_info, base, frame, height, width)
+
+        key = (base["cache_key"], cam_info.uid, height, width)
+        frame = self._ray_cache.get(key)
+        if frame is None:
+            frame = self.camera_frame(cam_info, base, height, width)
+            self._ray_cache[key] = frame
+        return self.apply_pose(cam_info, base, frame, height, width)
 
     # ------------------------------------------------------------------ optimization
 
     def regularization(self) -> torch.Tensor:
-        loss = torch.zeros((), device="cuda")
+        loss = torch.zeros((), device=self.device)
         for lens in self.lenses.values():
             loss = loss + lens.regularization(
                 self.cfg.camera_opt_reg_l2, self.cfg.camera_opt_reg_curvature
@@ -463,6 +569,13 @@ class CameraModel(nn.Module):
 
     def set_frozen(self, frozen: bool):
         self.frozen = frozen
+        self.invalidate_ray_cache()
+
+    def _load_from_state_dict(self, *args, **kwargs):
+        # * A checkpoint just replaced every residual parameter; anything cached from the
+        # * previous values would render the wrong rays.
+        self.invalidate_ray_cache()
+        return super()._load_from_state_dict(*args, **kwargs)
 
     def set_lr_scale(self, scale: float):
         "Scale every group's LR by a schedule factor, preserving the per-group ratios."
@@ -492,6 +605,8 @@ class CameraModel(nn.Module):
             return
         self.optimizer.step()
         self.optimizer.zero_grad(set_to_none=True)
+        # * The parameters moved: every cached camera-frame table is now stale.
+        self.invalidate_ray_cache()
 
     def monotonicity_margin(self) -> float:
         """min over theta of d(theta + dtheta_rad)/d(theta_base); < 0 means the map folded.
@@ -500,7 +615,7 @@ class CameraModel(nn.Module):
         below -1. Cheap to check, and it turns an assumption into a logged number.
         """
         margin = 1.0
-        samples = torch.linspace(0.0, 1.0, 512, device="cuda")
+        samples = torch.linspace(0.0, 1.0, 512, device=self.device)
         for lens in self.lenses.values():
             if not lens.active_channels():
                 continue

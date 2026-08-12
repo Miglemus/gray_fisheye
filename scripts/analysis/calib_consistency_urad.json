@@ -1,0 +1,35 @@
+[
+ {
+  "name": "myscenes (one lens, 7 independent COLMAP fits)",
+  "n_scenes": 7,
+  "common_urad_rms": 791.326211084095,
+  "common_urad_peak": 1872.667227871716,
+  "deviation_urad_rms": 505.52150230371075,
+  "calib_disagreement_urad_rms": 868.6790809538555,
+  "shared_over_scene_specific": 1.5623332262039185,
+  "secant_px_per_rad_mean": 301.16021632768945,
+  "legacy_peak_via_derivative_px": 0.336013449909718
+ },
+ {
+  "name": "FullCircle refit_rttpf (lens 1, 9 independent re-fits)",
+  "n_scenes": 9,
+  "common_urad_rms": 207.5715771822111,
+  "common_urad_peak": 342.2138106543571,
+  "deviation_urad_rms": 136.43028216938603,
+  "calib_disagreement_urad_rms": 216.7239073063793,
+  "shared_over_scene_specific": 1.6973791122436523,
+  "secant_px_per_rad_mean": 203.9863551392612,
+  "legacy_peak_via_derivative_px": 0.06703212080950258
+ },
+ {
+  "name": "FullCircle refit_rttpf (lens 2, 9 independent re-fits)",
+  "n_scenes": 9,
+  "common_urad_rms": 197.21617360902593,
+  "common_urad_peak": 306.98126647621393,
+  "deviation_urad_rms": 113.84272569885482,
+  "calib_disagreement_urad_rms": 137.79495974023533,
+  "shared_over_scene_specific": 1.5353732109069824,
+  "secant_px_per_rad_mean": 203.43656726120162,
+  "legacy_peak_via_derivative_px": 0.06290407203766965
+ }
+]

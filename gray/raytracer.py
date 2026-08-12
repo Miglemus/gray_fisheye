@@ -142,6 +142,10 @@ class Raytracer(torch.nn.Module):
         if cfg.camera_opt != "off":
             self.camera_model = CameraModel(cfg)
         self._base_bearing_cache = {}
+        # * Rescaled intrinsics, keyed exactly like the base bearings. Same argument: they
+        # * depend on the camera and the render resolution, never on the pose, so rebuilding
+        # * them per frame is 5 kernel launches per render for a constant answer.
+        self._intrinsics_cache = {}
 
         # * Last outputs, kept for backward pass
         self.output_channels = None
@@ -151,6 +155,22 @@ class Raytracer(torch.nn.Module):
     def init_exposure_comp(self, scene_info: SceneInfo):
         self.exposure_comp = ExposureComp(self.cfg, scene_info)
 
+    @staticmethod
+    def _camera_cache_key(cam_info: CameraInfo, height: int, width: int):
+        """Everything `upload_camera_intrinsics()` pushes, and nothing else.
+
+        Shared by the base-bearing cache and the rescaled-intrinsics cache so the two can
+        never disagree about what "the same camera" means. The pose is deliberately absent:
+        no quantity keyed on this may depend on it.
+        """
+        intrinsics = getattr(cam_info, "intrinsics", None)
+        return (
+            cam_info.uid, height, width,
+            getattr(cam_info, "model", "pinhole"),
+            float(cam_info.fov_y), cam_info.image_width, cam_info.image_height,
+            None if intrinsics is None else tuple(np.asarray(intrinsics).ravel().tolist()),
+        )
+
     def upload_camera_intrinsics(self, cam_info: CameraInfo):
         "Push the camera model and its intrinsics, rescaled to the active render resolution."
         camera = self.cuda_module.get_camera()
@@ -159,14 +179,22 @@ class Raytracer(torch.nn.Module):
 
         model = normalize_gray_model(getattr(cam_info, "model", "pinhole"))
         if model in ["opencv_fisheye", "thin_prism_fisheye", "rad_tan_thin_prism_fisheye"]:
-            # * Intrinsics are stored for the full image; rescale to the active render resolution
-            intrinsics = cam_info.intrinsics_cuda().clone()
-            scale_x = self.render_width / cam_info.image_width
-            scale_y = self.render_height / cam_info.image_height
-            intrinsics[0] *= scale_x  # fx
-            intrinsics[2] *= scale_x  # cx
-            intrinsics[1] *= scale_y  # fy
-            intrinsics[3] *= scale_y  # cy
+            # * Intrinsics are stored for the full image; rescale to the active render
+            # * resolution. Cached: the rescale is a clone plus four in-place multiplies, i.e.
+            # * five kernel launches, for an answer that is constant per (camera, resolution).
+            cache_key = Raytracer._camera_cache_key(
+                cam_info, self.render_height, self.render_width
+            )
+            intrinsics = self._intrinsics_cache.get(cache_key)
+            if intrinsics is None:
+                intrinsics = cam_info.intrinsics_cuda().clone()
+                scale_x = self.render_width / cam_info.image_width
+                scale_y = self.render_height / cam_info.image_height
+                intrinsics[0] *= scale_x  # fx
+                intrinsics[2] *= scale_x  # cx
+                intrinsics[1] *= scale_y  # fy
+                intrinsics[3] *= scale_y  # cy
+                self._intrinsics_cache[cache_key] = intrinsics
             if model == "opencv_fisheye":
                 camera.set_opencv_fisheye(intrinsics)
             elif model == "thin_prism_fisheye":
@@ -200,13 +228,7 @@ class Raytracer(torch.nn.Module):
         fisheye is 1368x912, so the resolution alone happened to separate them.
         """
         height, width = self.render_height, self.render_width
-        intrinsics = getattr(cam_info, "intrinsics", None)
-        cache_key = (
-            cam_info.uid, height, width,
-            getattr(cam_info, "model", "pinhole"),
-            float(cam_info.fov_y), cam_info.image_width, cam_info.image_height,
-            None if intrinsics is None else tuple(np.asarray(intrinsics).ravel().tolist()),
-        )
+        cache_key = Raytracer._camera_cache_key(cam_info, height, width)
         cached = self._base_bearing_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -302,6 +324,12 @@ class Raytracer(torch.nn.Module):
         # * the raygen through the framebuffer. Everything upstream of the ray -- intrinsic
         # * residual, non-central origin, per-view pose -- is then plain autograd, closed by
         # * the dL/d(ray) that cuda/backward_pass.cu now writes back.
+        # *
+        # * COST: this is the entire FPS tax of the camera model, and it is the PYTHON path,
+        # * not the non-centrality -- `noncentral`, `central_matched` and `ana` all measured
+        # * within 5 % of each other on tunnel. `CameraModel.forward()` therefore caches the
+        # * pose-independent half of the synthesis per (camera, resolution); what is left per
+        # * image is one 3x3 GEMM, a renormalize and the two framebuffer copies below.
         self._ray_origin = None
         self._ray_direction = None
         if self.camera_model is not None:
@@ -428,6 +456,11 @@ class Raytracer(torch.nn.Module):
         self.render_width = width
         self.render_height = height
         self.cuda_module.set_render_resolution(width, height)
+        # * Every ray cache is keyed on the render resolution already, so this is belt and
+        # * braces -- but a stale ray field is the one bug class this branch has paid for
+        # * twice (scene_scale, then the stale-bearing collision), so drop them anyway.
+        if self.camera_model is not None:
+            self.camera_model.invalidate_ray_cache()
 
     @staticmethod
     def from_point_cloud(

@@ -14,13 +14,19 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from collect import NUM_RINGS, load, mask_for, ring_map  # noqa: E402
+from collect import NUM_RINGS, SCENES, load, mask_for, ring_map  # noqa: E402
 
 import math  # noqa: E402
 
 WS = "/workspace"
 HERE = os.path.dirname(os.path.abspath(__file__))
-RUNGS = ["off", "ana", "central_matched", "noncentral"]
+# * W4: extended from the original 4 to the full 6-variant ladder so that `rungs.json` is the
+# * single ladder source `pack.py` consumes. The two *subtractive* rungs are the ones that
+# * carry the identifiability argument, so leaving them out of the packed report would have
+# * meant the report could not show the result the ladder exists for. `subtractive.py` scores
+# * the same six with the same code path (both import `collect.load` / `collect.ring_map`), and
+# * `pack.py` cross-checks the two files rung by rung.
+RUNGS = ["off", "ana", "central_matched", "noncentral_no_ana", "z_only", "noncentral"]
 
 
 def run_dir(scene, rung):
@@ -62,7 +68,7 @@ def score(run, mask, idx):
 
 
 def main():
-    scenes = sys.argv[1:] or ["tunnel"]
+    scenes = sys.argv[1:] or list(SCENES)
     dest = os.path.join(HERE, "rungs.json")
     out = json.load(open(dest)) if os.path.exists(dest) else {}
     for scene in scenes:
