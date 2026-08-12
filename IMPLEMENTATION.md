@@ -306,11 +306,41 @@ headline rung has.** Weighted rms displacement of the learned field between the 
 The intrinsic rung is still moving by about its own size when training stops; the residual
 rung has largely settled. The learning-rate sweep argues against this mattering (10x the
 learning rate does not help and 100x hurts, which is not what a step-starved optimizer looks
-like) but it is not a substitute for more iterations. The *a fortiori* test — all three rungs
-at **30k** with `--scale_decay 0.9999375`, on `workshop` (widest gap) and `tunnel` (where the
-control scores exactly -0.004) — is queued. Until it lands, the honest statement is: **at
-equal budget the control recovers 25 % of the gain**; whether it climbs with more budget is
-open. Credit to the `paper-brainstorm` session for raising this.
+like) but it is not a substitute for more iterations. Credit to the `paper-brainstorm` session
+for raising it.
+
+**The *a fortiori* test settles it: 30k, `--scale_decay 0.9999375` (the documented fix for
+the per-iteration trap), same four rungs, on `workshop` (widest gap) and `tunnel` (where the
+control scored exactly -0.004 at 15k).**
+
+| scene / rung | 15k | 30k | budget effect |
+|---|---|---|---|
+| tunnel / off | 28.537 | 28.616 | +0.079 |
+| tunnel / rttpf | 28.533 | 28.735 | +0.201 |
+| tunnel / rttpf_z | 28.732 | 28.732 | -0.000 |
+| tunnel / noncentral | 28.729 | 28.814 | +0.086 |
+| workshop / off | 27.198 | 27.303 | +0.105 |
+| workshop / rttpf | 27.270 | 27.423 | +0.153 |
+| workshop / rttpf_z | 27.937 | 28.139 | +0.201 |
+| workshop / noncentral | 27.942 | 28.104 | +0.162 |
+
+Three things, in decreasing order of confidence:
+
+1. **The under-training objection is dead.** At doubled budget `noncentral - rttpf` is still
+   +0.080 (tunnel) and +0.681 (workshop). The control does not catch up.
+2. **The 25 % figure is budget-dependent and must be quoted as "at 15k".** `rttpf - off` goes
+   -0.004 -> +0.119 and +0.071 -> +0.120. Note the two 30k values agree to 0.001 dB across
+   two very different scenes, which looks like a systematic lens re-calibration worth a
+   scene-independent ~0.12 dB rather than a scene-dependent effect. If that holds on the
+   other five, the converged re-calibration share is ~0.12/0.36 ~ **33 %**, not 25 % and not
+   the 40-45 % a naive extrapolation of the two deltas suggests. **Not measured — do not
+   quote either extrapolation.**
+3. **`rttpf_z == noncentral` is established at 15k and NOT yet at 30k.** Mean difference over
+   the two 30k scenes is -0.024 (workshop +0.035, tunnel **-0.082**), and tunnel is the
+   discordant point: it is the only run in the whole matrix that gained *nothing* from the
+   doubled budget, so its z term contributes +0.199 at 15k and -0.003 at 30k. At ~1.3x the
+   0.06 dB noise floor on n=1 this is not interpretable either way. **The 7-scene tie at 15k
+   (p = 0.76) stands; a 30k tie needs the other five scenes before it can be claimed.**
 
 ### The two rungs are not finding the same correction
 
