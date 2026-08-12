@@ -335,12 +335,27 @@ Three things, in decreasing order of confidence:
    other five, the converged re-calibration share is ~0.12/0.36 ~ **33 %**, not 25 % and not
    the 40-45 % a naive extrapolation of the two deltas suggests. **Not measured — do not
    quote either extrapolation.**
-3. **`rttpf_z == noncentral` is established at 15k and NOT yet at 30k.** Mean difference over
-   the two 30k scenes is -0.024 (workshop +0.035, tunnel **-0.082**), and tunnel is the
-   discordant point: it is the only run in the whole matrix that gained *nothing* from the
-   doubled budget, so its z term contributes +0.199 at 15k and -0.003 at 30k. At ~1.3x the
-   0.06 dB noise floor on n=1 this is not interpretable either way. **The 7-scene tie at 15k
-   (p = 0.76) stands; a 30k tie needs the other five scenes before it can be claimed.**
+3. **`rttpf_z == noncentral` is established at 15k and simply not yet tested at 30k.** Mean
+   PSNR difference over the two 30k scenes is -0.024 (workshop +0.035, tunnel -0.082). Two
+   scenes at ~1.3x the 0.06 dB noise floor cannot establish or refute a tie either way. **The
+   7-scene tie at 15k (p = 0.76) stands; a 30k tie needs the other five scenes.**
+
+   Across all three metrics at 30k, nothing separates the two models consistently — PSNR
+   splits by scene, SSIM favours `noncentral` by 0.0003 on both, LPIPS is a wash:
+
+   | 30k | PSNR | SSIM | LPIPS |
+   |---|---|---|---|
+   | tunnel: rttpf_z / noncentral | 28.7320 / **28.8143** | 0.95442 / **0.95477** | **0.15474** / 0.15483 |
+   | workshop: rttpf_z / noncentral | **28.1387** / 28.1036 | 0.95685 / **0.95712** | 0.17165 / **0.17159** |
+
+   **Do not repeat the reading this section carried first**, that `tunnel/rttpf_z` "gained
+   nothing from the doubled budget" because its PSNR read 28.7321 at 15k and 28.7320 at 30k.
+   Only the *PSNR* coincided. Its SSIM moved +0.00147 and its LPIPS -0.00268, both inside the
+   range of the other seven runs (+0.00147..+0.00229 and -0.00189..-0.00841). It is an
+   ordinary run and a ~1 % coincidence over eight pairs, not an anomaly. Caught by the
+   `paper-brainstorm` session; confirmed here independently. The lesson is the general one:
+   **a single metric agreeing to 4 decimal places is a coincidence to check against the other
+   metrics, not evidence about the run** — and the check costs one script.
 
 ### The two rungs are not finding the same correction
 
