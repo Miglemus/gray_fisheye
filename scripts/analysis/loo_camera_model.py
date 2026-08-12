@@ -149,7 +149,11 @@ def queue_lines(written, rung):
         # * `default` group, so the gpu1 lane alone does not keep the card to one job.
         wait = ('for i in $(seq 1 60); do f=$(nvidia-smi --query-gpu=memory.free '
                 '--format=csv,noheader,nounits -i 1); [ "$f" -gt 17000 ] && break; sleep 60; done')
-        print(f"pueue add --group gpu1 --print-task-id -- 'cd {root} && export {env} && {wait} && "
+        # * `--priority 100`: the paper's experiments go ahead of the baseline sweeps, which
+        # * the other sessions queue at -50. Without it these land at 0 and a later batch at
+        # * 0 would interleave with them.
+        print(f"pueue add --group gpu1 --priority 100 --print-task-id -- "
+              f"'cd {root} && export {env} && {wait} && "
               f"bash scripts/train_myscenes.sh {held_out} {model_path} -y "
               f"--camera_opt {rung} --camera_opt_from_iter 3000 "
               f"--camera_model_init {donor} --camera_model_init_rung {rung} "
