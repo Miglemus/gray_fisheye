@@ -49,14 +49,27 @@ FC = ["room1", "room2", "room3", "flat1", "flat2", "lab", "lounge", "dark", "per
 FC_ROOT = "/workspace/dataset/fullcircle_tracks/refit_rttpf"
 FC_RUNS = ("/workspace/gray/worktrees/noncentral-camera/out/fullcircle_rttpf/"
            "{scene}_refit_rttpf")
-# rttpf params: fx fy cx cy then k1 k2 p1 p2 k3 k4 sx1 sy1 ... -- the radial ones are the
-# 4 k's at 4,5,8,9 (p1,p2 tangential and sx1,sy1 thin-prism sit between them).
-RADIAL = [4, 5, 8, 9]
+# * Radial-coefficient positions, BY CAMERA MODEL. Getting this wrong is silent: you still
+# * get a smooth r(theta), it is just the wrong lens, and the damage concentrates at the rim
+# * where the residual acts. Layouts are `gray/camera.py:52-68`, and for rttpf the
+# * `extra_params[0..5] = k0..k5` of `cuda/core/rtpf.cuh` confirms it.
+# *   RAD_TAN_THIN_PRISM_FISHEYE (16): fx fy cx cy | k0..k5 | p0 p1 | s0..s3  -> SIX
+# *                                    CONSECUTIVE radials at 4..9
+# *   THIN_PRISM_FISHEYE         (12): fx fy cx cy | k1 k2 p1 p2 k3 k4 sx1 sy1 -> 4,5,8,9
+# *   OPENCV_FISHEYE              (8): fx fy cx cy | k1..k4                    -> 4..7
+# * This file used the 12-param layout on 16-param rttpf data until 2026-08-12. Truncating
+# * the polynomial anywhere fabricates rim noise: `[4:8]` gave 5.0x of plate-scale dispersion
+# * across the myscenes fits, `[4,5,8,9]` 1.12x, the correct 4..9 gives 1.01x.
+RADIAL_BY_NPARAM = {16: [4, 5, 6, 7, 8, 9], 12: [4, 5, 8, 9], 8: [4, 5, 6, 7]}
 GRID = np.linspace(0.02, 1.0, 60)  # * fraction of the common invertible pixel radius
 
 
 def radial_poly(params):
-    return [params[i] for i in RADIAL]
+    try:
+        return [params[i] for i in RADIAL_BY_NPARAM[len(params)]]
+    except KeyError:
+        raise SystemExit(f"unknown fisheye layout: {len(params)} params -- add it to "
+                         f"RADIAL_BY_NPARAM before trusting any number from this script")
 
 
 def r_of_theta(fx, radial, theta):

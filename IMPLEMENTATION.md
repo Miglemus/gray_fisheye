@@ -679,12 +679,20 @@ Combining this with the attribution ladder (tunnel, r4, 15k: `off` 28.49 -> `ana
 `noncentral` 28.73), this section originally concluded a **~60 % re-calibration / ~40 %
 non-centrality** split.
 
-> **SUPERSEDED — the split is ~25 / 75, measured directly.** The inference above goes from
-> *"the correction lies inside rttpf's span"* to *"most of the gain is re-calibration"*, and
-> that step does not hold. `--camera_opt rttpf` performs the re-calibration instead of
+> **SUPERSEDED — the split is ~25 / 75 at 15k, measured directly.** The inference above goes
+> from *"the correction lies inside rttpf's span"* to *"most of the gain is re-calibration"*,
+> and that step does not hold. `--camera_opt rttpf` performs the re-calibration instead of
 > arguing about it and recovers **+0.082 of the +0.333 dB** over seven scenes (see "RESULTS
-> — the re-calibration control"). Expressibility was never in question; **photometric value
-> was**, and the two are not the same quantity.
+> — the re-calibration control"). Expressibility was never in question — corrected for its
+> index bugs the span figure is *99.2 %*, higher than the 98.6 % originally claimed, which
+> makes the point sharper: **essentially the whole radial correction is inside rttpf's span,
+> and actually re-fitting it is worth 0.08 dB.** Photometric value is a different quantity
+> from expressibility, and only the former decomposes a PSNR gain.
+>
+> Quote the 25 % **with "at 15k" attached**. At 30k the control roughly doubles
+> (`rttpf - off`: tunnel -0.004 -> +0.119, workshop +0.071 -> +0.120) while `noncentral - off`
+> is flat to rising (+0.191 -> +0.198, +0.743 -> +0.801). The re-calibration share is
+> budget-dependent; the ordering is not.
 
 `scripts/analysis/rttpf_span.py` closes the loop by projecting the learned *central* field
 (all azimuthal orders, `z` excluded) onto the span of all 16 rttpf parameters, using the
@@ -703,21 +711,15 @@ renderer's own solver linearized one coefficient at a time:
 
 Two things to read off it, and they point the same way:
 
-* **The span claim survives — but re-derive it from here, not from the 98.6 %.** 90 % of the
-  central correction really is reachable with the 16 parameters COLMAP already ships. The
-  98.6 % figure above should not be quoted: `residual_expressible.py` imports
-  `calib_consistency.py`, whose `RADIAL = [4, 5, 8, 9]` is **wrong for rttpf** — that index
-  set is the 12-parameter `THIN_PRISM_FISHEYE` layout, and its comment says so. rttpf's six
-  radial coefficients are **consecutive at 4..9** (`cuda/core/rtpf.cuh:33` evaluates
-  `1 + k0 t^2 + ... + k5 t^12`, a degree-13 map). The number is therefore doubly compromised:
-  its basis `[t, t^3, t^5, t^7, t^9]` truncates a degree-13 polynomial at degree 9, and its
-  `r_of_theta` / `theta_of_r` geometry is built from the wrong four coefficients. The
-  `paper-brainstorm` session measured the geometric consequence: `S/fx` at 85.5 deg spreads
-  1.12x across the 7 myscenes fits under `[4,5,8,9]` against 1.01x under the correct `[4:10]`
-  — truncating anywhere manufactures rim noise. **Nothing in this branch inherits it**:
-  `rttpf_fields.plate_scale` loops `params[4+index]` over `range(6)` and `rttpf_span.py`
-  imports from there, so both the 90 % and the field tables above are computed on the correct
-  polynomial.
+* **The span claim survives, and got stronger once its script was fixed.** The 98.6 % was
+  computed with two index bugs (see "Pre-existing issues"); corrected it reads **99.2 %**.
+  Radially, rttpf can express essentially all of it. This branch's independent 2D number is
+  **90 %**, and the two are consistent rather than contradictory: 99.2 % is the *radial slice*,
+  90 % is the *full 2D field*, and the difference is the azimuthal k=1/k=2 content, where
+  rttpf answers with `p0,p1,s0..s3` against the splines' per-order profiles. Nothing in this
+  branch ever inherited the bug — `rttpf_fields.plate_scale` loops `params[4+index]` over
+  `range(6)` and `rttpf_span.py` imports from there, so the 90 % and the field tables above
+  were always on the correct degree-13 polynomial.
 * **And it does not matter.** Descent lands nowhere near the projection: the `found/best`
   column scatters from 0.26 to 2.23 (the mean of 0.98 is an averaging artefact), and the
   field comparison shows cosines around zero. The re-calibration is not a worse version of
@@ -940,17 +942,30 @@ ring or ablation number is affected -- those are measured, not derived.
 
 ## Pre-existing issues found (not caused by this branch)
 
-* **`scripts/analysis/calib_consistency.py:54` has `RADIAL = [4, 5, 8, 9]`, which is the
-  wrong index set for rttpf** — it is the `THIN_PRISM_FISHEYE` (12-parameter) layout, and the
-  comment above it describes that model. rttpf's six radial coefficients are consecutive at
-  **4..9**. Everything downstream of its `radial_poly` / `r_of_theta` / `theta_of_r` /
-  `plate_scale` is affected, including `residual_expressible.py` (which `import`s it) and
-  therefore the **98.6 % "absorbable by re-fitting" figure** — see the SUPERSEDED note under
-  "Is the gain the lens is underfit by rttpf". Found by the `paper-brainstorm` session, whose
-  three-way cross-check (analytic 0.632, numeric differentiation of the real projection
-  0.638, an independent agent 0.633) settles the correct value. **Not fixed here** — it is
-  another branch's script and other sessions consume it; fix it there, and re-derive any
-  number that came out of it. Nothing in this branch imports it.
+* ~~**`calib_consistency.py` used the 12-parameter radial layout on 16-parameter rttpf
+  data**~~ — **FIXED 2026-08-12** by the `paper-brainstorm` session, patch ported into this
+  worktree. `RADIAL = [4, 5, 8, 9]` (the `THIN_PRISM_FISHEYE` layout, as its own comment
+  described) became `RADIAL_BY_NPARAM`, keyed on parameter count and raising on any unknown
+  layout. rttpf's six radials are consecutive at **4..9** (`cuda/core/rtpf.cuh` evaluates
+  `1 + k0 t^2 + ... + k5 t^12`).
+
+  **`residual_expressible.py` carried a second, independent instance of the same mistake**,
+  and the way it hid is the part worth remembering: `BASIS = [1,3,5,7,9]` was hardcoded to
+  five terms for a span that needs seven (`t .. t^13`). The script *has* a control — fit the
+  UNcorrected samples, which must return ~0 — and the control passed at 0.00018 px, because
+  the sampler (`radial_poly`) and the fitting basis were truncated **the same way**. A
+  self-consistency check cannot catch an error shared by both sides of the comparison; it
+  needs an external reference, which here is `rtpf.cuh`. With both fixed the control returns
+  0.0000 and expressibility reads **99.2 %**, up from 98.6 %.
+
+  Consequences for numbers quoted elsewhere in this file: the 98.6 % becomes 99.2 % (and
+  makes the "expressible is not profitable" point *stronger*, not weaker — see the SUPERSEDED
+  note); the shared/per-scene ratio 1.58 is unaffected at 1.56, since the residual comes from
+  the checkpoint spline and never passed through the bad indices; but **"cross-scene
+  disagreement predicts nothing" was itself an artefact and is now false** — myscenes 2.970 px
+  vs FullCircle 2.393 px become 0.397 vs 0.049, i.e. the disagreement now orders the two
+  datasets the same way the gains do. Do not oppose shared bias and variance in the writeup;
+  on this evidence they are not separable.
 * `tests/test_single_gaussian.py`, `tests/test_multiple_gaussians.py`,
   `tests/test_fisheye_mask.py` — **5 tests fail on `main` too** (`mock_camera` has no
   `origin_cuda`, etc.). Untouched here.
