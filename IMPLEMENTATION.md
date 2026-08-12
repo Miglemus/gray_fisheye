@@ -204,13 +204,18 @@ seven scenes) and reads the rival from the canonical shared-mask aggregate. `our
 Ahead on 6 of 7 scenes. Full metric set under the same shared-mask protocol
 (`scripts/full_metrics.py`; LPIPS uses masked_eval's `frame_lpips`):
 
-| method | PSNR | SSIM | LPIPS |
-|---|---|---|---|
-| gray (published) | 27.124 | 0.9458 | 0.1600 |
-| SPaGS | 27.333 | **0.9514** | 0.1657 |
-| DirectFisheye-GS | 26.818 | 0.9445 | 0.1872 |
-| 3DGUT | 25.930 | 0.9306 | 0.2272 |
-| **gray + camera model** | **27.561** | 0.9491 | **0.1547** |
+| method | PSNR | SSIM | LPIPS | trained camera params |
+|---|---|---|---|---|
+| gray (published) | 27.124 | 0.9458 | 0.1600 | 0 |
+| SPaGS | 27.333 | **0.9514** | 0.1657 | 0 |
+| DirectFisheye-GS | 26.818 | 0.9445 | 0.1872 | 0 |
+| 3DGUT | 25.930 | 0.9306 | 0.2272 | 0 |
+| **gray + camera model** (`noncentral`) | **27.561** | 0.9491 | 0.1547 | 111 |
+| **gray + `rttpf_z`** | 27.554 | 0.9492 | **0.1546** | **17** |
+
+`rttpf_z` ties the full residual model on **all three** metrics — PSNR within 0.007, SSIM
++0.0001, LPIPS -0.0001 — with 6x fewer trained camera parameters. Same shared-mask eval
+pass, `scripts/full_metrics.py --runs-root tmp/r4_control --suffix _rttpf_z`.
 
 We take PSNR and LPIPS; **SPaGS keeps SSIM** (0.9514 vs 0.9491). The camera model narrows
 the SSIM gap from 0.0056 to 0.0023 but does not close it -- say so rather than reporting
