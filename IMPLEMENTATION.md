@@ -1427,3 +1427,197 @@ extra parameter count — `rttpf_z` has 17 trained camera parameters against `no
 rttpf_z 28.258, noncentral 28.254. Same conclusion, but both intrinsic rungs there ran at
 lr 1e-5, the default at the time, so those rows are comparable to each other and not to the
 -r 4 table.)
+
+---
+
+## The leave-one-out transfer, and the unit bug it exposed (2026-08-13)
+
+### The question
+
+Every camera model above was trained on the scene it was scored on. So `z(θ)`'s +0.244 dB is
+compatible with two readings: it is a property of the *lens* (one physical object, calibrated
+seven times), or each scene's model absorbs that scene's own calibration error and its own
+gaussians. Leave-one-out discriminates them: build a model from the other six scenes, freeze
+it, train only the gaussians on the held-out scene. A lens property transfers; per-scene
+absorption cannot, because six donors disagree about the seventh's error by construction.
+
+### The naive LOO fails — and it is not the machinery
+
+`scripts/analysis/loo_camera_model.py` averages the seven `noncentral` models as they sit on
+disk, converts `z` through `--camera_model_init_z_scale scene_radius`, freezes, trains.
+Result (myscenes, -r 4, 15k, masked test PSNR):
+
+| scene | `off` | LOO transfer | self-trained | transfer − off | recovered |
+|---|---:|---:|---:|---:|---:|
+| reception | 27.277 | 27.729 | 27.751 | +0.452 | 95 % |
+| library | 31.580 | 31.692 | 31.854 | +0.112 | 41 % |
+| workshop | 27.198 | 27.284 | 27.942 | +0.086 | 12 % |
+| forest | 19.565 | 19.618 | 19.645 | +0.053 | 66 % |
+| atrium | 27.878 | 27.803 | 28.036 | −0.076 | −48 % |
+| classroom | 28.562 | 28.124 | 28.973 | −0.438 | −107 % |
+| tunnel | 28.538 | 27.103 | 28.729 | **−1.435** | **−753 %** |
+
+Mean −0.178 dB. **Three explanations were killed before drawing any conclusion**, and each is
+worth knowing on its own:
+
+1. **The load/freeze machinery is correct.** `tunnel_selfinit_from0` initialises tunnel from
+   *its own* checkpoint, freezes, and trains: 28.78 against 28.73 self-trained — inside the
+   0.068 dB floor. `--camera_model_init` + `--camera_model_freeze` reproduces its source.
+2. **`--camera_opt_from_iter` is irrelevant for a frozen model.** The plausible story — the
+   learnable recipe's delay of 3000 switches a full-amplitude frozen field on abruptly, and
+   gray has no densification to recover — is *false*: 0 vs 3000 moves tunnel by 0.02 dB and
+   classroom by 0.09. Do not spend runs on this again.
+3. **The tensors loaded.** `camera_model_init.json` in every run: 4 tensors, 111 frozen
+   parameters, 3 dropped param groups.
+
+### The cause: `scene_radius` is not a metric-scale proxy
+
+`scripts/analysis/loo_diagnose.py`. `z(θ)` is in raw COLMAP world units, which are arbitrary
+per reconstruction. The loader converts between scenes by the ratio of scene radii. That
+assumes the radius is proportional to world-units-per-millimetre. It is not — the radius
+measures how far the camera walked. Measured, on `z(θ)−z(0)` at the rim:
+
+| | mean | sd/\|mean\| | max/min |
+|---|---:|---:|---:|
+| raw world units | 9.26e-3 | 0.75 | 5.43 |
+| divided by the scene radius | 1.30e-3 | **0.83** | **6.48** |
+
+**Normalising by the radius makes the agreement worse.** The seven amplitudes span 5.4×
+(atrium 4.58e-3, workshop 2.49e-2). On tunnel the donor installed 2.4× too much
+non-centrality; `|z error| / |z own|` correlates with the dB lost at **r = −0.76** (n=7),
+while the absolute errors correlate with nothing (−0.04, −0.15).
+
+### But the SHAPE of `z(θ)` is shared — and it is the most lens-like part of the model
+
+Gauge-free profiles, pairwise cosine similarity across the seven scenes:
+
+| | mean | min | negative pairs |
+|---|---:|---:|---:|
+| `z(θ)` (non-central) | **0.971** | 0.903 | **0/21** |
+| `Δθ(θ)` (angular residual) | 0.850 | 0.462 | 0/21 |
+
+After one optimal scalar, the donor mean explains each held-out scene's `z` profile to
+7.5–17.1 % (atrium 34.2 %), against 18–202 % for the angular residual with no rescaling
+available to it. **The non-central term is more consistent across scenes than the angular
+residual is** — the opposite of what "z absorbs scene-specific error" predicts.
+
+### The corrected protocol
+
+`scripts/analysis/loo_shape_transfer.py` writes three donor variants per held-out scene:
+
+| variant | angular | z | asks |
+|---|---|---|---|
+| `donorshape` | mean of the other six | unit-norm mean shape × α | does the whole model transfer once z's unit is fixed? |
+| `donorz` | **zeroed** | unit-norm mean shape × α | does non-centrality alone transfer? — the paper's claim |
+| `donorang` | mean of the other six | **zeroed** | does the angular residual alone transfer? |
+
+Each donor's `z_weights` is divided by its own profile norm **before** averaging — the plain
+mean of the raw tensors is a mean of seven different units, which is what the first LOO did.
+The amplitude is baked into the checkpoint in the *target's* world units, so these runs use
+`--camera_model_init_z_scale none`: the radius conversion is the thing under indictment and
+must not be reapplied.
+
+**Be honest about α.** It is read off the held-out scene's own trained model, which was fit on
+that scene's TRAIN views only — so there is no test leakage, but the protocol is "shape
+transferred, amplitude refit on the target reconstruction", not "nothing about s touched the
+model". Say it that way. The no-leakage version (one scalar `z_gain` multiplying a frozen
+shape, learned by SGD) is the follow-up if the shape transfer works.
+
+### RESULT — the corrected LOO, and the decomposition that decides the paper (2026-08-13)
+
+Seven scenes, `-r 4`, 15k, frozen donor models, `results.json → rad_tan_thin_prism_fisheye`
+(the field every row in this table uses; it reproduces the earlier LOO table exactly).
+
+| scene | `off` | self `noncentral` | self `z_only` | `donorshape` | `donorang` | `donorz` | **`donorz_z_only`** |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| atrium | 27.878 | 28.0358 | 27.9694 | 27.8526 | 27.3342 | 27.8432 | 27.9547 |
+| classroom | 28.562 | 28.9728 | 28.8769 | 28.9158 | 28.0020 | 28.7043 | 28.9304 |
+| forest | 19.565 | 19.6451 | 19.5029 | 19.5990 | 19.5079 | 19.5378 | 19.6539 |
+| library | 31.580 | 31.8535 | 31.7824 | 31.7157 | 31.1083 | 31.7070 | 31.7434 |
+| reception | 27.277 | 27.7514 | 27.6976 | 27.6288 | 26.7918 | 27.5908 | 27.7409 |
+| tunnel | 28.538 | 28.7286 | 28.6488 | 28.6813 | 28.2182 | 28.3572 | 28.7084 |
+| workshop | 27.198 | 27.9415 | 27.6105 | 27.5730 | 26.8292 | 27.0188 | 27.6180 |
+
+Paired against `off`, n=7:
+
+| transferred component | Δ dB | t p | Wilcoxon | positive | share of the self-trained gain |
+|---|---:|---:|---:|---:|---:|
+| self-trained `noncentral` (reference) | +0.333 | 0.0084 | 0.0156 | 7/7 | 100 % |
+| **non-centrality alone (`z_only` donors)** | **+0.250** | **0.0066** | **0.0156** | **7/7** | **75 %** |
+| self-trained `z_only` | +0.213 | 0.0203 | 0.0312 | 6/7 | 64 % |
+| donor angular + donor z (`donorshape`) | +0.195 | 0.0201 | 0.0312 | 6/7 | 59 % |
+| z from the `noncentral` donors (`donorz`) | +0.023 | 0.749 | 1.000 | 3/7 | 7 % |
+| **angular residual alone (`donorang`)** | **−0.401** | **0.0009** | **0.0156** | **0/7** | **−120 %** |
+
+**The non-central term is the only part of the learned camera model that transfers.** Built
+from six other scenes and frozen, it is worth +0.250 dB on a scene it never saw — *more* than
+each scene's own `z_only` fit (+0.213), because averaging six independent fits denoises the
+profile and the amplitude is then set optimally. Per-scene recovery: forest 111 %, reception
+98 %, classroom 90 %, tunnel 89 %, library 60 %, workshop 56 %, atrium 49 %.
+
+**The angular residual is the opposite: per-scene calibration error.** Transferring it costs
+0.401 dB and loses on **7 scenes out of 7** (`shape − ang` = +0.596, p=0.016, 7/7). That is
+why `donorshape` (59 %) scores *below* `donorz_z_only` (75 %) — the angular part it carries
+drags it down. It also explains the naive LOO's failure on top of the unit bug.
+
+**`donorz`'s zero was a mis-specification, not a result.** α was fit against the `noncentral`
+model's z profile, where z was learned *jointly with* an angular residual that `donorz` then
+zeroes. Sourcing donors and α from the `z_only` fits instead moves it +0.227 dB, p=0.016, 7/7.
+The `z_only` profiles are also the more consistent population: pairwise cosine 0.979 mean,
+0.938 min, 0/21 negative, against 0.971/0.903 for `noncentral`. **Always source a donor from
+the rung you intend to transfer.**
+
+Reproduce: `python scripts/analysis/loo_shape_transfer.py --rung z_only --tags donorz_z_only`,
+then `bash tmp/loo/shape/queue.sh`. Peak VRAM 15.8–18.7 GB, so these do not fit the 12 GB card
+and cannot be paired on the 24 GB one; 15.5 min each, strictly serial.
+
+### SPECIFICITY — does the transfer measure THIS lens, or would any profile do? (2026-08-14)
+
+`scripts/analysis/loo_specificity.py`. Two controls, both of which had to fail:
+
+* **`wronglens`** — the z shape averaged over the seven mip-NeRF 360 **pinhole** fits (same
+  rung, same optimiser, same code, on a camera where a pupil shift is unphysical), rescaled
+  to the magnitude the held-out scene's own fit chose. Same ray displacement, wrong shape.
+  The amplitude is matched **by norm, not least squares**: an LS α against a near-orthogonal
+  shape collapses to ~0, so the control would install nothing and "pass" trivially.
+* **`flip`** — the correct donor shape with the amplitude negated.
+
+| scene | `off` | correct shape | wrong lens | flipped |
+|---|---:|---:|---:|---:|
+| atrium | 27.878 | 27.9547 | 27.7431 | 27.5471 |
+| classroom | 28.562 | 28.9304 | 28.4505 | 27.9411 |
+| forest | 19.565 | 19.6539 | 19.5584 | 19.4658 |
+| library | 31.580 | 31.7434 | 31.4146 | 31.2042 |
+| reception | 27.277 | 27.7409 | 27.1543 | 26.8507 |
+| tunnel | 28.538 | 28.7084 | 28.4365 | 28.2262 |
+| workshop | 27.198 | 27.6180 | 26.9614 | 26.3603 |
+
+| vs `off`, n=7 | Δ dB | t p | Wilcoxon | positive |
+|---|---:|---:|---:|---:|
+| correct donor shape | **+0.250** | 0.0066 | 0.0156 | **7/7** |
+| wrong lens (pinhole shape) | **−0.126** | 0.0030 | 0.0156 | **0/7** |
+| flipped (−z) | **−0.429** | 0.0031 | 0.0156 | **0/7** |
+
+Correct beats wrong-lens by +0.376 and flipped by +0.679, **7/7 both times**. So the gain is
+not "any smooth ray-origin shift of about the right size helps a fisheye": the same magnitude
+with the wrong shape *hurts*, and the right shape with the wrong sign hurts twice as much.
+The model is recovering a specific, signed, physical profile.
+
+**The CPU half of this control is arguably the better figure and costs nothing.** Same code,
+same rung, seven scenes each:
+
+| population | pairwise cosine, mean | min | negative pairs |
+|---|---:|---:|---:|
+| 7 fisheye scenes, one lens | **+0.979** | +0.938 | **0/21** |
+| 7 mip-NeRF 360 pinhole scenes | **+0.142** | −0.965 | **9/21** |
+
+The two population means are orthogonal to each other (−0.015). Where there is a lens to
+measure, the method recovers the same profile seven times; where a pupil shift cannot exist,
+it recovers mutually orthogonal noise. That reframes the earlier pinhole `z_only` null
+(+0.039, +0.023, both under the 0.068 floor): it is not merely zero in dB, it is *structured*
+as noise — the seven fits agree on nothing.
+
+**Gotcha:** `loo_specificity.py` reuses `loo_shape_transfer.queue_lines`, whose output path is
+hardcoded to `tmp/loo/shape/{scene}_{tag}`. The specificity RUNS therefore land next to the
+shape-transfer runs, not under `tmp/loo/specificity/` (which holds only the donor models and
+the queue file). Look for `{scene}_wronglens` and `{scene}_flip` under `tmp/loo/shape/`.
