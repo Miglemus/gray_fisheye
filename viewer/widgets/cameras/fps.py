@@ -34,20 +34,18 @@ class FPSCamera(Camera):
 
     def setup(self):
         if self.mode != ViewerMode.SERVER:
-            self.movement_keys = {
-                "w": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_W))],
-                "a": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_A))],
-                "s": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_S))],
-                "d": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_D))],
-                "q": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_Q))],
-                "e": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_E))],
-                "j": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_J))],
-                "k": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_K))],
-                "l": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_L))],
-                "i": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_I))],
-                "o": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_O))],
-                "u": imgui.Key[glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw.KEY_U))],
-            }
+            def layout_key(name: str):
+                # glfw.get_key_name returns None on Wayland / some layouts; fall back to the QWERTY position.
+                glfw_key = getattr(glfw, f"KEY_{name.upper()}")
+                try:
+                    mapped = glfw.get_key_name(glfw.KEY_UNKNOWN, glfw.get_key_scancode(glfw_key))
+                except Exception:
+                    mapped = None
+                if not mapped or mapped not in imgui.Key.__members__:
+                    mapped = name
+                return imgui.Key[mapped]
+
+            self.movement_keys = {k: layout_key(k) for k in "wasdqejkliou"}
 
     def process_mouse_input(self) -> bool:
         if imgui.is_mouse_dragging(0):
